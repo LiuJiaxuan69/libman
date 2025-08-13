@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<html lang="zh-CN" xmlns:th="http://www.thymeleaf.org">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>图书捐赠</title>
+    <link rel="stylesheet" href="/css/navbar.css">
+    <style>
+        body {
+            background: #f5f6fa;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            margin: 0;
+            padding: 0;
+        }
+        .container {
+            max-width: 480px;
+            margin: 60px auto 0 auto;
+            background: #fff;
+            border-radius: 12px;
+            box-shadow: 0 2px 16px rgba(0,0,0,0.10);
+            padding: 36px 36px 28px 36px;
+        }
+        h2 {
+            text-align: center;
+            color: #0984e3;
+            margin-bottom: 32px;
+            letter-spacing: 2px;
+        }
+        form {
+            display: flex;
+            flex-direction: column;
+            gap: 18px;
+        }
+        label {
+            font-weight: bold;
+            color: #636e72;
+            margin-bottom: 6px;
+        }
+        input[type="text"], input[type="number"] {
+            padding: 10px 12px;
+            border: 1px solid #dfe6e9;
+            border-radius: 5px;
+            font-size: 1.08em;
+            background: #f9fafb;
+            transition: border 0.2s;
+        }
+        input[type="text"]:focus, input[type="number"]:focus {
+            border: 1.5px solid #0984e3;
+            outline: none;
+        }
+        .submit-btn {
+            margin-top: 18px;
+            padding: 10px 0;
+            background: linear-gradient(90deg, #0984e3 60%, #74b9ff 100%);
+            color: #fff;
+            border: none;
+            border-radius: 5px;
+            font-size: 1.12em;
+            font-weight: bold;
+            cursor: pointer;
+            letter-spacing: 2px;
+            transition: background 0.2s;
+        }
+        .submit-btn:hover {
+            background: linear-gradient(90deg, #74b9ff 0%, #0984e3 100%);
+        }
+        .msg {
+            text-align: center;
+            margin-top: 18px;
+            color: #00b894;
+            font-size: 1.05em;
+            min-height: 24px;
+        }
+    </style>
+</head>
+<body>
+    <div th:replace="navbar :: nav"></div>
+    <div class="container">
+        <h2>图书捐赠</h2>
+        <form id="donateForm">
+            <div>
+                <label for="bookName">书名</label>
+                <input type="text" id="bookName" name="bookName" required maxlength="50" placeholder="请输入书名">
+            </div>
+            <div>
+                <label for="author">作者</label>
+                <input type="text" id="author" name="author" required maxlength="30" placeholder="请输入作者">
+            </div>
+            <div>
+                <label for="price">定价(元)</label>
+                <input type="number" id="price" name="price" required min="0" max="9999" step="0.01" placeholder="请输入定价">
+            </div>
+            <div>
+                <label for="publish">出版社</label>
+                <input type="text" id="publish" name="publish" required maxlength="40" placeholder="请输入出版社">
+            </div>
+            <button type="submit" class="submit-btn">捐赠</button>
+        </form>
+        <div class="msg" id="msg"></div>
+    </div>
+    <script src="/js/navbar.js"></script>
+    <script>
+        document.getElementById('donateForm').addEventListener('submit', function(e) {
+            e.preventDefault();
+            const data = {
+                bookName: document.getElementById('bookName').value.trim(),
+                author: document.getElementById('author').value.trim(),
+                price: document.getElementById('price').value,
+                publish: document.getElementById('publish').value.trim()
+            };
+            fetch('/book/addBook', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(data)
+            })
+            .then(resp => resp.json())
+            .then(result => {
+                const msg = document.getElementById('msg');
+                if(result.status === 'SUCCESS') {
+                    msg.textContent = '捐赠成功，感谢您的支持！';
+                    document.getElementById('donateForm').reset();
+                } else {
+                    msg.textContent = result.errorMessage || '捐赠失败，请重试';
+                }
+            })
+            .catch(() => {
+                document.getElementById('msg').textContent = '网络异常，请稍后重试';
+            });
+        });
+    </script>
+</body>
+</html>

@@ -1,0 +1,232 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>图书管理系统 - 首页</title>
+    <link rel="stylesheet" href="/css/navbar.css">
+    <style>
+        body {
+            background: #f5f6fa;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            margin: 0;
+            padding: 0;
+        }
+        .container {
+            max-width: 1100px;
+            margin: 40px auto 0 auto;
+            background: #fff;
+            border-radius: 10px;
+            box-shadow: 0 2px 12px rgba(0,0,0,0.08);
+            padding: 30px 30px 20px 30px;
+        }
+        .book-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-bottom: 24px;
+        }
+        .book-table th, .book-table td {
+            border: 1px solid #dfe6e9;
+            padding: 10px 8px;
+            text-align: center;
+        }
+        .book-table th {
+            background: #f1f2f6;
+            color: #636e72;
+            font-weight: bold;
+        }
+        .book-table td.status-normal {
+            color: #00b894;
+            font-weight: bold;
+        }
+        .book-table td.status-forbidden {
+            color: #d35400;
+            font-weight: bold;
+        }
+        .book-table td.status-deleted {
+            color: #d63031;
+            font-weight: bold;
+        }
+        .book-table td {
+            font-size: 1em;
+        }
+        .action-btn {
+            padding: 5px 14px;
+            border: none;
+            border-radius: 4px;
+            font-size: 0.98em;
+            cursor: pointer;
+            margin: 0 2px;
+            transition: background 0.2s;
+        }
+        .action-borrow {
+            background: #0984e3;
+            color: #fff;
+        }
+        .action-borrow:hover {
+            background: #74b9ff;
+        }
+        .action-return {
+            background: #00b894;
+            color: #fff;
+        }
+        .action-return:hover {
+            background: #55efc4;
+        }
+        .action-disabled {
+            background: #b2bec3;
+            color: #fff;
+            cursor: not-allowed;
+        }
+        .pagination {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            margin-top: 10px;
+        }
+        .pagination-btn, .pagination-num {
+            margin: 0 3px;
+            padding: 6px 14px;
+            border: none;
+            border-radius: 4px;
+            background: #dfe6e9;
+            color: #636e72;
+            font-size: 1em;
+            cursor: pointer;
+            transition: background 0.2s, color 0.2s;
+        }
+        .pagination-btn:hover, .pagination-num:hover {
+            background: #b2bec3;
+        }
+        .pagination-num.active {
+            background: #0984e3;
+            color: #fff;
+            font-weight: bold;
+        }
+    </style>
+</head>
+<body>
+    <div th:replace="navbar :: nav"></div>
+    <div class="container">
+        <table class="book-table">
+            <thead>
+                <tr>
+                    <th>图书ID</th>
+                    <th>书名</th>
+                    <th>作者</th>
+                    <th>定价</th>
+                    <th>出版社</th>
+                    <th>状态</th>
+                    <th>操作</th>
+                </tr>
+            </thead>
+            <tbody id="bookTableBody">
+                <!-- 图书数据动态填充 -->
+            </tbody>
+        </table>
+        <div class="pagination" id="pagination">
+            <!-- 分页按钮动态填充 -->
+        </div>
+    </div>
+    <script src="/js/navbar.js"></script>
+    <script>
+        // 分页与数据渲染
+        let currentPage = 1;
+        let pageSize = 5;
+        let totalPage = 1;
+        function fetchBooks(page) {
+            currentPage = page;
+            fetch('/book/getListByPage', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ currentPage: page, pageSize: pageSize })
+            })
+            .then(resp => resp.json())
+            .then(result => {
+                if(result.status === 'SUCCESS') {
+                    renderBooks(result.data.records);
+                    renderPagination(result.data.total);
+                }
+            });
+        }
+        function renderBooks(books) {
+            const tbody = document.getElementById('bookTableBody');
+            tbody.innerHTML = '';
+            books.forEach(book => {
+                let statusText = '';
+                let statusClass = '';
+                switch(book.status) {
+                    case 1: statusText = '可借阅'; statusClass = 'status-normal'; break;
+                    case 2: statusText = '不可借阅'; statusClass = 'status-forbidden'; break;
+                    case 0: default: statusText = '无效'; statusClass = 'status-deleted'; break;
+                }
+                let actionBtn = '';
+                if(book.isBorrowedByMe) {
+                    actionBtn = `<button class="action-btn action-return" onclick="returnBook(${book.id})">归还</button>`;
+                } else if(book.isBorrowed) {
+                    actionBtn = `<button class="action-btn action-disabled" disabled>已借阅</button>`;
+                } else if(book.status === 1) {
+                    actionBtn = `<button class="action-btn action-borrow" onclick="borrowBook(${book.id})">借阅</button>`;
+                } else {
+                    actionBtn = `<button class="action-btn action-disabled" disabled>不可借阅</button>`;
+                }
+                tbody.innerHTML += `
+                    <tr>
+                        <td>${book.id}</td>
+                        <td>${book.bookName}</td>
+                        <td>${book.author}</td>
+                        <td>${book.price}</td>
+                        <td>${book.publish}</td>
+                        <td class="${statusClass}">${statusText}</td>
+                        <td>${actionBtn}</td>
+                    </tr>
+                `;
+            });
+        }
+        function renderPagination(total) {
+            totalPage = Math.ceil(total / pageSize);
+            const pag = document.getElementById('pagination');
+            pag.innerHTML = '';
+            // 首页
+            pag.innerHTML += `<button class="pagination-btn" onclick="fetchBooks(1)">首页</button>`;
+            // 上一页
+            pag.innerHTML += `<button class="pagination-btn" onclick="fetchBooks(${Math.max(1, currentPage-1)})">上一页</button>`;
+            // 数字页码
+            for(let i=1; i<=totalPage; i++) {
+                pag.innerHTML += `<button class="pagination-num${i===currentPage?' active':''}" onclick="fetchBooks(${i})">${i}</button>`;
+            }
+            // 下一页
+            pag.innerHTML += `<button class="pagination-btn" onclick="fetchBooks(${Math.min(totalPage, currentPage+1)})">下一页</button>`;
+            // 末页
+            pag.innerHTML += `<button class="pagination-btn" onclick="fetchBooks(${totalPage})">最后一页</button>`;
+        }
+        // 借阅、归还操作
+        function borrowBook(bookId) {
+            fetch('/book/borrowBook', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(bookId)
+            })
+            .then(resp => resp.json())
+            .then(result => {
+                alert(result.data || result.errorMessage);
+                fetchBooks(currentPage);
+            });
+        }
+        function returnBook(bookId) {
+            fetch('/book/returnBook', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(bookId)
+            })
+            .then(resp => resp.json())
+            .then(result => {
+                alert(result.data || result.errorMessage);
+                fetchBooks(currentPage);
+            });
+        }
+        // 首次加载第一页
+        fetchBooks(1);
+    </script>
+</body>
+</html>

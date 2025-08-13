@@ -1,0 +1,20 @@
+<!-- templates/navbar.html -->
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org">
+<head></head>
+<body>
+    <div th:fragment="nav">
+        <div class="navbar">
+            <div class="user-info">
+                <span id="userName">未登录</span>
+                <a href="/view/login" id="loginLink">登录</a>
+            </div>
+            <div class="nav-links">
+                <a href="/view/index">主页</a>
+                <a href="/view/donate" style="margin-left: 24px;">捐赠</a>
+                <!-- 未来可扩展更多页面链接 -->
+            </div>
+        </div>
+    </div>
+</body>
+</html>
