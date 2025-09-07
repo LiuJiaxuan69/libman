@@ -20,7 +20,13 @@ configurations {
 }
 
 repositories {
-	mavenCentral()
+	maven { url 'https://maven.aliyun.com/repository/public' }
+    maven { url 'https://maven.aliyun.com/repository/google' } // 如果你需要Google仓库
+    maven { url 'https://maven.aliyun.com/repository/gradle-plugin' } // 如果你需要Gradle插件仓库
+
+    // 2. 如果从镜像源找不到，可以尝试原来的源（但通常阿里云等镜像很全，可以省略）
+    mavenCentral()
+    google()
 }
 
 dependencies {
@@ -34,6 +40,10 @@ dependencies {
 	annotationProcessor 'org.projectlombok:lombok'
 	testImplementation 'org.springframework.boot:spring-boot-starter-test'
 	testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+	// Redis
+    implementation 'org.springframework.boot:spring-boot-starter-data-redis'
+    implementation 'org.springframework.boot:spring-boot-starter-cache'
+	implementation 'com.fasterxml.jackson.core:jackson-databind'
 }
 
 tasks.named('test') {
