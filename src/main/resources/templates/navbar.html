@@ -1,7 +1,26 @@
 <!-- templates/navbar.html -->
 <!DOCTYPE html>
 <html xmlns:th="http://www.thymeleaf.org">
-<head></head>
+
+<head>
+    <style>
+        .navbar {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            z-index: 1000;
+            background: #fff;
+            /* 可根据实际需要调整 */
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+            height: 56px;
+            /* 或 60px、64px，根据实际需求调整 */
+            line-height: 56px;
+            /* 让内容垂直居中 */
+        }
+    </style>
+</head>
+
 <body>
     <div th:fragment="nav">
         <div class="navbar">
@@ -17,4 +36,5 @@
         </div>
     </div>
 </body>
+
 </html>

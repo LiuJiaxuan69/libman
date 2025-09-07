@@ -1,232 +1,407 @@
 <!DOCTYPE html>
-<html lang="zh-CN">
+<html lang="en">
+
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>图书管理系统 - 首页</title>
+    <title>index</title>
     <link rel="stylesheet" href="/css/navbar.css">
     <style>
         body {
-            background: #f5f6fa;
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
             margin: 0;
-            padding: 0;
+            font-family: Arial, sans-serif;
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
         }
+
         .container {
-            max-width: 1100px;
-            margin: 40px auto 0 auto;
+            flex: 1;
+            display: flex;
+            justify-content: center;
+            /* 控制 book-container 在水平方向居中 */
+            align-items: center;
+            /* 控制 book-container 在垂直方向居中 */
+            background: #f5f5f5;
+            height: calc(100vh - 56px);
+        }
+
+        .book-container {
+            width: 60%;
+            height: 80%;
+            background: white;
+            border-radius: 12px;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+            padding: 20px;
+            overflow-y: auto;
+        }
+
+        .book-card {
+            width: calc(100% - 40px);
+            border-radius: 12px;
             background: #fff;
-            border-radius: 10px;
-            box-shadow: 0 2px 12px rgba(0,0,0,0.08);
-            padding: 30px 30px 20px 30px;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+            padding: 16px;
+            margin-bottom: 16px;
+            cursor: pointer;
+            transition: transform 0.2s, box-shadow 0.2s;
         }
-        .book-table {
-            width: 100%;
-            border-collapse: collapse;
-            margin-bottom: 24px;
+
+        .book-card:hover {
+            transform: translateY(-4px);
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
         }
-        .book-table th, .book-table td {
-            border: 1px solid #dfe6e9;
-            padding: 10px 8px;
-            text-align: center;
+
+        .book-card .card-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
         }
-        .book-table th {
-            background: #f1f2f6;
-            color: #636e72;
+
+        .book-card .title {
+            font-weight: bold;
+            font-size: 1.1em;
+        }
+
+        .book-card .status {
             font-weight: bold;
         }
-        .book-table td.status-normal {
+
+        .status-normal {
             color: #00b894;
-            font-weight: bold;
         }
-        .book-table td.status-forbidden {
+
+        .status-forbidden {
             color: #d35400;
-            font-weight: bold;
         }
-        .book-table td.status-deleted {
+
+        .status-deleted {
             color: #d63031;
-            font-weight: bold;
         }
-        .book-table td {
-            font-size: 1em;
+
+        .book-card .card-details {
+            margin-top: 12px;
+            display: none;
+            font-size: 0.95em;
+            color: #636e72;
         }
+
+        .book-card.expanded .card-details {
+            display: block;
+        }
+
         .action-btn {
-            padding: 5px 14px;
+            padding: 5px 12px;
             border: none;
             border-radius: 4px;
-            font-size: 0.98em;
+            font-size: 0.9em;
             cursor: pointer;
-            margin: 0 2px;
+            margin-left: 8px;
             transition: background 0.2s;
         }
+
         .action-borrow {
             background: #0984e3;
             color: #fff;
         }
+
         .action-borrow:hover {
             background: #74b9ff;
         }
+
         .action-return {
             background: #00b894;
             color: #fff;
         }
+
         .action-return:hover {
             background: #55efc4;
         }
+
         .action-disabled {
             background: #b2bec3;
             color: #fff;
             cursor: not-allowed;
         }
-        .pagination {
+
+        #toast-container {
+            position: fixed;
+            top: calc(56px + 3%) !important;
+            /* 中间偏上，可根据需要微调 */
+            left: 50%;
+            transform: translateX(-50%);
+            /* 水平居中 */
+            z-index: 9999;
             display: flex;
-            justify-content: center;
+            flex-direction: column;
             align-items: center;
-            margin-top: 10px;
+            /* 子 toast 水平居中 */
         }
-        .pagination-btn, .pagination-num {
-            margin: 0 3px;
-            padding: 6px 14px;
-            border: none;
-            border-radius: 4px;
-            background: #dfe6e9;
-            color: #636e72;
-            font-size: 1em;
-            cursor: pointer;
-            transition: background 0.2s, color 0.2s;
-        }
-        .pagination-btn:hover, .pagination-num:hover {
-            background: #b2bec3;
-        }
-        .pagination-num.active {
-            background: #0984e3;
+
+        .toast {
+            min-width: 200px;
+            margin-bottom: 10px;
+            padding: 10px 16px;
+            border-radius: 6px;
             color: #fff;
-            font-weight: bold;
+            background-color: rgba(0, 0, 0, 0.7);
+            box-shadow: 0 2px 6px rgba(0, 0, 0, 0.2);
+            opacity: 0;
+            transform: translateY(-20px);
+            transition: all 0.3s ease;
+        }
+
+        .toast.show {
+            opacity: 1;
+            transform: translateY(0);
         }
     </style>
 </head>
+
 <body>
     <div th:replace="navbar :: nav"></div>
+    <div id="toast-container" style="position: fixed; top: 20px; right: 20px; z-index: 9999;"></div>
+    <!-- 主体容器 -->
     <div class="container">
-        <table class="book-table">
-            <thead>
-                <tr>
-                    <th>图书ID</th>
-                    <th>书名</th>
-                    <th>作者</th>
-                    <th>定价</th>
-                    <th>出版社</th>
-                    <th>状态</th>
-                    <th>操作</th>
-                </tr>
-            </thead>
-            <tbody id="bookTableBody">
-                <!-- 图书数据动态填充 -->
-            </tbody>
-        </table>
-        <div class="pagination" id="pagination">
-            <!-- 分页按钮动态填充 -->
+        <!-- 图书内容区 -->
+        <div class="book-container">
+            <!-- 这里后续放书籍卡片/表格 -->
         </div>
     </div>
     <script src="/js/navbar.js"></script>
     <script>
-        // 分页与数据渲染
-        let currentPage = 1;
-        let pageSize = 5;
-        let totalPage = 1;
-        function fetchBooks(page) {
-            currentPage = page;
-            fetch('/book/getListByPage', {
+        function showToast(message, duration = 2000) {
+            const container = document.getElementById('toast-container');
+            const toast = document.createElement('div');
+            toast.className = 'toast';
+            toast.textContent = message;
+            container.appendChild(toast);
+
+            // 延迟显示
+            setTimeout(() => toast.classList.add('show'), 10);
+
+            // 自动消失
+            setTimeout(() => {
+                toast.classList.remove('show');
+                setTimeout(() => container.removeChild(toast), 300);
+            }, duration);
+        }
+
+    </script>
+    <script>
+        const PAGE_SIZE = 8; // 每次加载数量
+        const initialLoad = 24; // 首次加载数量
+        let localBorrowStatus = {}; // 存储每本书是否被借阅，key: bookId, value: true/false
+        let loading = false; // 加载锁，防止重复加载
+        let Offset = 0; // 偏移量
+        function loadBooks(Count) {
+
+            return fetch('/book/getListByOffset', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ currentPage: page, pageSize: pageSize })
+                body: JSON.stringify({ offset: Offset, count: Count })
             })
-            .then(resp => resp.json())
-            .then(result => {
-                if(result.status === 'SUCCESS') {
-                    renderBooks(result.data.records);
-                    renderPagination(result.data.total);
-                }
-            });
+                .then(resp => resp.json())
+                .then(result => {
+                    if (result.status === 'SUCCESS') {
+                        const books = result.data.records;
+                        // 更新本地借阅状态缓存
+                        books.forEach(book => {
+                            // 更新本地借阅状态缓存
+                            if (!(book.id in localBorrowStatus)) {
+                                localBorrowStatus[book.id] = book.isBorrowed;
+                            }
+                        });
+
+                        // 渲染书籍卡片
+                        renderBookCards(books);
+                        if (books.length < PAGE_SIZE) {
+                            console.log('已加载完所有书籍');
+                        }
+                        // 更新 offSet
+                        Offset += result.data.records.length;
+                    } else {
+                        console.error('获取书籍失败:', result.errorMessage);
+                    }
+                })
+                .catch(err => {
+                    console.error('网络或接口异常:', err);
+                });
         }
-        function renderBooks(books) {
-            const tbody = document.getElementById('bookTableBody');
-            tbody.innerHTML = '';
+        // 加载书籍卡片
+        function renderBookCards(books) {
+            const container = document.querySelector('.book-container');
+
             books.forEach(book => {
-                let statusText = '';
-                let statusClass = '';
-                switch(book.status) {
-                    case 1: statusText = '可借阅'; statusClass = 'status-normal'; break;
-                    case 2: statusText = '不可借阅'; statusClass = 'status-forbidden'; break;
-                    case 0: default: statusText = '无效'; statusClass = 'status-deleted'; break;
-                }
-                let actionBtn = '';
-                if(book.isBorrowedByMe) {
-                    actionBtn = `<button class="action-btn action-return" onclick="returnBook(${book.id})">归还</button>`;
-                } else if(book.isBorrowed) {
-                    actionBtn = `<button class="action-btn action-disabled" disabled>已借阅</button>`;
-                } else if(book.status === 1) {
-                    actionBtn = `<button class="action-btn action-borrow" onclick="borrowBook(${book.id})">借阅</button>`;
-                } else {
-                    actionBtn = `<button class="action-btn action-disabled" disabled>不可借阅</button>`;
-                }
-                tbody.innerHTML += `
-                    <tr>
-                        <td>${book.id}</td>
-                        <td>${book.bookName}</td>
-                        <td>${book.author}</td>
-                        <td>${book.price}</td>
-                        <td>${book.publish}</td>
-                        <td class="${statusClass}">${statusText}</td>
-                        <td>${actionBtn}</td>
-                    </tr>
-                `;
+                const card = document.createElement('div');
+                card.className = 'book-card';
+                card.dataset.bookId = book.id;
+                card.innerHTML = `
+            <div class="card-header">
+                <div class="title">${book.bookName}</div>
+                <div class="status ${getStatusClass(book.status)}">${getStatusText(book.status)}</div>
+            </div>
+            <div class="card-details">
+                <p>书籍ID: ${book.id}</p>
+                <p>作者: ${book.author}</p>
+                <p>出版社: ${book.publish}</p>
+                <p>定价: ${book.price} 元</p>
+                <div class="card-actions">${getActionButton(book)}</div>
+            </div>
+        `;
+
+                // 点击展开/收起详细信息
+                card.addEventListener('click', (e) => {
+                    // 防止点击按钮触发卡片展开
+                    if (!e.target.classList.contains('action-btn')) {
+                        card.classList.toggle('expanded');
+                    }
+                });
+
+                container.appendChild(card);
             });
         }
-        function renderPagination(total) {
-            totalPage = Math.ceil(total / pageSize);
-            const pag = document.getElementById('pagination');
-            pag.innerHTML = '';
-            // 首页
-            pag.innerHTML += `<button class="pagination-btn" onclick="fetchBooks(1)">首页</button>`;
-            // 上一页
-            pag.innerHTML += `<button class="pagination-btn" onclick="fetchBooks(${Math.max(1, currentPage-1)})">上一页</button>`;
-            // 数字页码
-            for(let i=1; i<=totalPage; i++) {
-                pag.innerHTML += `<button class="pagination-num${i===currentPage?' active':''}" onclick="fetchBooks(${i})">${i}</button>`;
+
+        // 根据状态获取文字
+        function getStatusText(status) {
+            switch (status) {
+                case 1: return '可借阅';
+                case 2: return '已借出';
+                case 0: default: return '无效';
             }
-            // 下一页
-            pag.innerHTML += `<button class="pagination-btn" onclick="fetchBooks(${Math.min(totalPage, currentPage+1)})">下一页</button>`;
-            // 末页
-            pag.innerHTML += `<button class="pagination-btn" onclick="fetchBooks(${totalPage})">最后一页</button>`;
         }
-        // 借阅、归还操作
+
+        // 根据状态获取 class
+        function getStatusClass(status) {
+            switch (status) {
+                case 1: return 'status-normal';
+                case 2: return 'status-forbidden';
+                case 0: default: return 'status-deleted';
+            }
+        }
+
+        // 获取操作按钮
+        function getActionButton(book) {
+            if (book.isBorrowedByMe) {
+                return `<button class="action-btn action-return" onclick="returnBook(${book.id})">归还</button>`;
+            } else if (book.isBorrowed) {
+                return `<button class="action-btn action-disabled" disabled>已借阅</button>`;
+            } else if (book.status === 1) {
+                return `<button class="action-btn action-borrow" onclick="borrowBook(${book.id})">借阅</button>`;
+            } else {
+                return `<button class="action-btn action-disabled" disabled>已借阅</button>`;
+            }
+        }
+        // 初始化加载
+        loadBooks(initialLoad);
+
+        // 检测是否已加载完所有书籍
+        async function checkIsEnd() {
+            try {
+                const response = await fetch('/book/isEnd', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(Offset) // 已加载数量
+                });
+                const result = await response.json();
+                if (result.status === 'SUCCESS') {
+                    // result.data 可以是对象 { isEnd: true/false, remaining: n }
+                    console.log('剩余未加载书籍数量:', result.data.remaining);
+                    return result.data;
+                } else {
+                    console.error('检测是否加载完毕失败:', result.errorMessage);
+                    return { isEnd: false, remaining: 0 };
+                }
+            } catch (err) {
+                console.error('网络或接口异常:', err);
+                return { isEnd: false, remaining: 0 };
+            }
+        }
+
+        // 无限滚动监听
+        const container = document.querySelector('.book-container');
+        container.addEventListener('scroll', async () => {
+            if (container.scrollTop + container.clientHeight >= container.scrollHeight - 10) {
+                if (loading) return;
+                loading = true;
+
+                try {
+                    // 检查是否还有书未加载
+                    const status = await checkIsEnd();
+                    console.log('是否加载完毕:', status.isEnd, '剩余:', status.remaining);
+                    if (!status.isEnd && status.remaining > 0) {
+                        // 根据剩余数量决定本次请求的数量
+                        const sizeToLoad = Math.min(PAGE_SIZE, status.remaining);
+                        await loadBooks(sizeToLoad);
+                    } else {
+                        console.log('所有书籍已加载完毕');
+                    }
+                } catch (err) {
+                    console.error('加载书籍出错:', err);
+                } finally {
+                    loading = false;
+                }
+            }
+        });
+
         function borrowBook(bookId) {
             fetch('/book/borrowBook', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(bookId)
             })
-            .then(resp => resp.json())
-            .then(result => {
-                alert(result.data || result.errorMessage);
-                fetchBooks(currentPage);
-            });
+                .then(resp => resp.json())
+                .then(result => {
+                    if (result.status === 'SUCCESS') {
+                        localBorrowStatus[bookId] = true;
+                        updateBookCard(bookId);
+                        showToast("借阅成功");
+                    } else {
+                        showToast("借阅失败：" + result.errorMessage);
+                    }
+                });
         }
+
         function returnBook(bookId) {
             fetch('/book/returnBook', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(bookId)
             })
-            .then(resp => resp.json())
-            .then(result => {
-                alert(result.data || result.errorMessage);
-                fetchBooks(currentPage);
-            });
+                .then(resp => resp.json())
+                .then(result => {
+                    if (result.status === 'SUCCESS') {
+                        localBorrowStatus[bookId] = false;
+                        updateBookCard(bookId);
+                        showToast("归还成功");
+                    } else {
+                        showToast("归还失败：" + result.errorMessage);
+                    }
+                });
         }
-        // 首次加载第一页
-        fetchBooks(1);
+
+        function updateBookCard(bookId) {
+            const card = document.querySelector(`.book-card[data-book-id='${bookId}']`);
+            if (!card) return;
+
+            const btnDiv = card.querySelector('.card-actions');
+            const statusDiv = card.querySelector('.status');
+
+            const isBorrowed = localBorrowStatus[bookId];
+
+            if (isBorrowed) { // 已借出
+                btnDiv.innerHTML = `<button class="action-btn action-return" onclick="returnBook(${bookId})">归还</button>`;
+                statusDiv.textContent = '已借出';
+                statusDiv.className = 'status status-forbidden';
+            } else { // 可借阅
+                btnDiv.innerHTML = `<button class="action-btn action-borrow" onclick="borrowBook(${bookId})">借阅</button>`;
+                statusDiv.textContent = '可借阅';
+                statusDiv.className = 'status status-normal';
+            }
+        }
+
+
     </script>
 </body>
+
 </html>
