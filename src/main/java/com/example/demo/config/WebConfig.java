@@ -17,7 +17,8 @@ public class WebConfig implements WebMvcConfigurer {
     private List<String> excludePaths = Arrays.asList(
         "/user/login",
         "/user/register",
-        "/view/**"
+        "/view/login",
+        "/view/register"
     );
 
     @Override
