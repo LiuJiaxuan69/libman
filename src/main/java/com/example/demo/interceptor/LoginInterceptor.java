@@ -13,11 +13,17 @@ import jakarta.servlet.http.HttpSession;
 @Component
 public class LoginInterceptor implements HandlerInterceptor {
     @Override
-    public boolean preHandle(HttpServletRequest request, HttpServletResponse response, Object handler) throws Exception {
+    public boolean preHandle(HttpServletRequest request, HttpServletResponse response, Object handler)
+            throws Exception {
         // 禁止自动创建Session（只起到验证作用）
         HttpSession session = request.getSession(false);
-        if(session != null && session.getAttribute(Constants.SESSION_USER_KEY) != null) {
+        String uri = request.getRequestURI();
+        if (session != null && session.getAttribute(Constants.SESSION_USER_KEY) != null) {
             return true;
+        } else if (uri.startsWith("/view/") || uri.equals("/")) {
+            // 用户未登录，访问页面，重定向到登录页面
+            response.sendRedirect("/view/login");
+            return false;
         }
         // 用户未登录，返回401
         response.setStatus(401);
