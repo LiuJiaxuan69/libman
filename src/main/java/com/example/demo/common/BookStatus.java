@@ -3,7 +3,7 @@ package com.example.demo.common;
 public enum BookStatus {
     DELETED(0, "无效"),
     NORMAL(1, "可借阅"),
-    FORBIDDEN(2, "不可借阅");
+    FORBIDDEN(2, "已借出");
 
     private Integer code;
     private String name;
