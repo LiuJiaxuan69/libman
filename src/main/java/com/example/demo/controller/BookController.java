@@ -5,7 +5,9 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
+import com.example.demo.common.BookLoadStatus;
 import com.example.demo.common.Constants;
+import com.example.demo.common.OffsetRequest;
 import com.example.demo.common.PageRequest;
 import com.example.demo.common.PageResult;
 import com.example.demo.common.Result;
@@ -39,6 +41,24 @@ public class BookController {
         }
         // 调用 service 层方法获取数据
         PageResult<BookInfo> pageResult = bookService.getBookListByPage(pageRequest, userId);
+        log.info("获取图书列表成功，详细信息如下：{}", pageResult);
+        return Result.success(pageResult);
+    }
+
+    // 按照偏移量分页获取书籍信息
+    @RequestMapping("/getListByOffset")
+    public Result<PageResult<BookInfo>> getBookListByOffset(@RequestBody OffsetRequest offsetRequest, HttpServletRequest request) {
+        log.info("获取图书列表，偏移量：{}, 每页记录数：{}", offsetRequest.getOffset(), offsetRequest.getCount());
+        Integer userId = null;
+        HttpSession session = request.getSession(false);
+        if (session != null) {
+            UserInfo userInfo = (UserInfo) session.getAttribute(Constants.SESSION_USER_KEY);
+            if (userInfo != null) {
+                userId = userInfo.getId();
+            }
+        }
+        // 调用 service 层方法获取数据
+        PageResult<BookInfo> pageResult = bookService.getBookListByOffset(offsetRequest.getOffset(), offsetRequest.getCount(), userId);
         log.info("获取图书列表成功，详细信息如下：{}", pageResult);
         return Result.success(pageResult);
     }
@@ -143,6 +163,16 @@ public class BookController {
             log.error("归还图书失败");
             return Result.fail("归还图书失败");
         }
+    }
+
+    // 检测图书是否加载完毕
+    @RequestMapping("/isEnd")
+    public Result<BookLoadStatus> isEnd(@RequestBody Integer currentCount) {
+        log.info("检测图书是否加载完毕，当前已加载图书数量：{}", currentCount);
+        boolean isEnd = currentCount >= bookService.getBookCount();
+        log.info("图书加载完毕状态：{}", isEnd);
+        BookLoadStatus status = new BookLoadStatus(isEnd, bookService.getBookCount() - currentCount);
+        return Result.success(status);
     }
 
 }
