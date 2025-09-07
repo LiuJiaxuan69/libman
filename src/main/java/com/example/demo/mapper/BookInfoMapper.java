@@ -14,9 +14,8 @@ import com.example.demo.model.BookInfo;
 @Mapper
 public interface BookInfoMapper {
     // 插入操作
-    @Insert("insert into book_info (book_name, author, donor_id, price, publish) values (#{bookName}, #{author}, #{donorId}, #{price}, #{publish})")
+    @Insert("insert into book_info (id, book_name, author, donor_id, price, publish) values (#{id}, #{bookName}, #{author}, #{donorId}, #{price}, #{publish})")
     Integer insertBook(BookInfo bookInfo);
-
 
     // 更新操作
     // 全量更新
@@ -55,6 +54,10 @@ public interface BookInfoMapper {
     @Select("select * from book_info")
     List<BookInfo> queryBookList();
 
+    // 全量查询书籍ID
+    @Select("select id from book_info")
+    List<Integer> queryAllBookIds();
+
     // 分页查询书籍信息
     @Select("select * from book_info order by id desc limit #{offset}, #{limit}")
     List<BookInfo> queryBookListByPage(int offset, int limit);
@@ -66,5 +69,17 @@ public interface BookInfoMapper {
     // 获取图书总数
     @Select("select count(*) from book_info")
     Integer countBooks();
+
+    // 根据书籍Id列表查询书籍信息
+    @Select({
+        "<script>",
+        "select * from book_info where id in",
+        "<foreach item='item' index='index' collection='list' open='(' separator=',' close=')'>",
+        "#{item}",
+        "</foreach>",
+        "</script>"
+    })
+    List<BookInfo> queryBooksByIdList(List<Integer> list);
+
 
 }
