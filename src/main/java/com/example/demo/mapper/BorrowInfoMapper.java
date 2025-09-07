@@ -1,6 +1,7 @@
 package com.example.demo.mapper;
 
 import java.sql.Date;
+import java.util.List;
 
 import org.apache.ibatis.annotations.Delete;
 import org.apache.ibatis.annotations.Insert;
@@ -9,6 +10,9 @@ import org.apache.ibatis.annotations.Select;
 import org.apache.ibatis.annotations.Update;
 
 import com.example.demo.model.BorrowInfo;
+
+import lombok.NonNull;
+
 
 @Mapper
 public interface BorrowInfoMapper {
@@ -27,4 +31,15 @@ public interface BorrowInfoMapper {
     // 查询操作
     @Select("select * from borrow_info where book_id = #{bookId} and user_id = #{userId}")
     BorrowInfo queryBorrowInfoByUserIdAndBookId(Integer bookId, Integer userId);
+
+    // 获取用户借阅了哪些书
+    @Select({
+        "<script>",
+        "select book_id from borrow_info where user_id = #{userId} and book_id in",
+        "<foreach item='item' index='index' collection='bookIdList' open='(' separator=',' close=')'>",
+        "#{item}",
+        "</foreach>",
+        "</script>"
+    })
+    List<Integer> queryBorrowedBookIdsByUserAndBookList(@NonNull Integer userId, @NonNull List<@NonNull Integer> bookIdList);
 }
