@@ -1,0 +1,53 @@
+services:
+  web:
+    image: nginx:stable-alpine3.21-perl
+    ports:
+      - "8110:8110"
+    networks:
+      - mylibnet
+    volumes:
+      - ./nginx/conf.d:/etc/nginx/conf.d
+    depends_on:
+      backservice:
+        condition: service_started
+
+  backservice:
+    image: openjdk:24-jdk
+    depends_on:
+      - mysql
+      - redis
+    command: java -jar /app/demo-0.0.1-SNAPSHOT.jar
+    volumes:
+      - ./app/:/app/
+    networks:
+      - mylibnet
+
+  mysql:
+    image: mysql:8.0.41
+    environment:
+      MYSQL_ROOT_PASSWORD: "ljx@docker"
+    networks:
+      - mylibnet
+    volumes:
+      - ./mysql/varlib/:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysql", "--user=root", "--password=ljx@docker", "-e", "SELECT 1;"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+  redis:
+    image: redis:7.2.10
+    networks:
+      - mylibnet
+    volumes:
+      - ./redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+
+networks:
+  mylibnet:
+    driver: bridge
