@@ -14,7 +14,7 @@ import com.example.demo.model.BookInfo;
 @Mapper
 public interface BookInfoMapper {
     // 插入操作
-    @Insert("insert into book_info (id, book_name, author, donor_id, price, publish) values (#{id}, #{bookName}, #{author}, #{donorId}, #{price}, #{publish})")
+    @Insert("insert into book_info (id, book_name, author, donor_id, price, publish, category_ids) values (#{id}, #{bookName}, #{author}, #{donorId}, #{price}, #{publish}, #{categoryIds})")
     Integer insertBook(BookInfo bookInfo);
 
     // 更新操作

@@ -4,6 +4,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.util.StringUtils;
+import org.springframework.web.bind.annotation.RequestParam;
 
 import com.example.demo.service.UserService;
 
@@ -21,7 +22,7 @@ public class UserController {
     private UserService userService;
 
     @RequestMapping("/login")
-    public Result<String> login(String userName, String password, HttpSession session) {
+    public Result<String> login(@RequestParam("userName") String userName, @RequestParam("password") String password, HttpSession session) {
         // 账号或密码为空
         if (!StringUtils.hasLength(userName) || !StringUtils.hasLength(password)) {
             return Result.fail("账号或密码不能为空");
@@ -44,7 +45,7 @@ public class UserController {
     }
 
     @RequestMapping("/register")
-    public Result<String> register(String userName, String password) {
+    public Result<String> register(@RequestParam("userName") String userName, @RequestParam("password") String password) {
 
         // 账号或密码为空
         if (!StringUtils.hasLength(userName) || !StringUtils.hasLength(password)) {
