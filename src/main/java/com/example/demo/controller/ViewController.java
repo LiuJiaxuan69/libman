@@ -28,4 +28,8 @@ public class ViewController {
         return "donate";
     }
 
+    @GetMapping("categories")
+    public String categories() {
+        return "categories";
+    }
 }
