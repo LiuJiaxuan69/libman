@@ -277,9 +277,14 @@
         <!-- 分类侧边栏 -->
         <div class="category-sidebar">
             <div class="filter-header">图书分类</div>
+                <div style="margin:10px 0;">
+                    <label style="font-weight:600;display:block;margin-bottom:6px;">匹配模式</label>
+                    <label style="margin-right:8px;"><input type="radio" name="catMode" value="1" checked> 交集</label>
+                    <label><input type="radio" name="catMode" value="2"> 并集</label>
+                </div>
             <div class="category-item" data-category-id="all">
                 <div class="category-checkbox"></div>
-                <span>全部图书</span>
+                <span>全部分类</span>
             </div>
             <!-- 分类将通过JS动态加载 -->
         </div>
@@ -471,11 +476,12 @@
                 .then(resp => resp.json())
                 .then(processBookResponse);
             } else {
-                // 加载选中分类的书籍
+                // 加载选中分类的书籍，发送 mode 参数（1=交集,2=并集）
+                const mode = document.querySelector('input[name="catMode"]:checked').value;
                 return fetch('/book/getBooksByCategoryIds', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(Array.from(selectedCategoryIds))
+                    body: JSON.stringify({ categoryIds: Array.from(selectedCategoryIds).map(id => parseInt(id,10)), mode: parseInt(mode,10) })
                 })
                 .then(resp => resp.json())
                 .then(result => {
@@ -726,6 +732,13 @@
             // 为"全部图书"分类添加点击事件
             document.querySelector('.category-item[data-category-id="all"]').addEventListener('click', () => {
                 toggleCategory('all');
+            });
+            // 为匹配模式的 radio 添加 change 事件，切换模式时重新加载书籍
+            document.querySelectorAll('input[name="catMode"]').forEach(r => {
+                r.addEventListener('change', () => {
+                    // 切换模式时刷新右侧书籍展示
+                    resetAndLoadBooks();
+                });
             });
         }
 
