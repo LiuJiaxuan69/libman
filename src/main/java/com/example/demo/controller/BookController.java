@@ -6,6 +6,7 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
 import com.example.demo.common.BookLoadStatus;
+import com.example.demo.common.BookStatus;
 import com.example.demo.common.Constants;
 import com.example.demo.common.OffsetRequest;
 import com.example.demo.common.PageRequest;
@@ -133,13 +134,24 @@ public class BookController {
             return Result.fail("用户未登录");
         }
         log.info("借阅图书，用户ID：{}，图书ID：{}", userInfo.getId(), bookId);
-        boolean success = bookService.borrowBook(userInfo.getId(), bookId);
-        if (success) {
+        BookStatus status = bookService.borrowBook(userInfo.getId(), bookId);
+        if (status == BookStatus.NORMAL) {
             log.info("借阅图书成功");
             return Result.success("借阅图书成功");
         } else {
-            log.error("借阅图书失败");
-            return Result.fail("借阅图书失败");
+            if (status == BookStatus.FORBIDDEN) {
+                log.error("借阅图书失败，图书已被借出");
+                return Result.fail("借阅图书失败，图书已被借出");
+            } else if (status == BookStatus.DELETED) {
+                log.error("借阅图书失败，图书无效");
+                return Result.fail("借阅图书失败，图书无效");
+            } else if (status == BookStatus.NOTEXIST) {
+                log.error("借阅图书失败，图书不存在");
+                return Result.fail("借阅图书失败，图书不存在");
+            } else {
+                log.error("借阅图书失败，未知错误");
+                return Result.fail("借阅图书失败，未知错误");
+            }
         }
     }
 
@@ -175,12 +187,25 @@ public class BookController {
         return Result.success(status);
     }
 
-    // 根据 JSON 格式的分类 ID 列表获取对应的书籍列表
+    // 根据 JSON 格式的分类 ID 列表获取对应的书籍列表，支持 mode：1=交集，2=并集
     @RequestMapping("/getBooksByCategoryIds")
-    public Result<java.util.List<BookInfo>> getBooksByCategoryIds(@RequestBody String categoryIdsJson) {
-        log.info("根据 JSON 格式的分类 ID 列表获取对应的书籍列表，分类 ID 列表：{}", categoryIdsJson);
-        java.util.List<BookInfo> books = bookService.getBooksByCategoryIds(categoryIdsJson);
-        log.info("获取到的书籍列表：{}", books);
-        return Result.success(books);
+    public Result<java.util.List<BookInfo>> getBooksByCategoryIds(@RequestBody String body) {
+        log.info("根据 JSON 格式的分类 ID 列表获取对应的书籍列表，请求体：{}", body);
+        try {
+            com.fasterxml.jackson.databind.ObjectMapper mapper = new com.fasterxml.jackson.databind.ObjectMapper();
+            java.util.Map<String, Object> map = mapper.readValue(body, new com.fasterxml.jackson.core.type.TypeReference<java.util.Map<String, Object>>() {});
+            String categoryIdsJson = mapper.writeValueAsString(map.getOrDefault("categoryIds", "[]"));
+            int mode = 1;
+            Object mobj = map.get("mode");
+            if (mobj != null) {
+                try { mode = Integer.parseInt(String.valueOf(mobj)); } catch (Exception ignore) {}
+            }
+            java.util.List<BookInfo> books = bookService.getBooksByCategoryIds(categoryIdsJson, mode);
+            log.info("获取到的书籍列表：{}", books);
+            return Result.success(books);
+        } catch (Exception ex) {
+            log.error("解析 getBooksByCategoryIds 请求体失败", ex);
+            return Result.fail("请求格式错误");
+        }
     }
 }
