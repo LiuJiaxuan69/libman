@@ -236,19 +236,35 @@
                 const card = document.createElement('div');
                 card.className = 'book-card';
                 card.dataset.bookId = book.id;
-                card.innerHTML = `
-            <div class="card-header">
-                <div class="title">${book.bookName}</div>
-                <div class="status ${getStatusClass(book.status)}">${getStatusText(book.status)}</div>
-            </div>
-            <div class="card-details">
-                <p>书籍ID: ${book.id}</p>
-                <p>作者: ${book.author}</p>
-                <p>出版社: ${book.publish}</p>
-                <p>定价: ${book.price} 元</p>
-                <div class="card-actions">${getActionButton(book)}</div>
-            </div>
-        `;
+                    // 标签格式美化：将JSON数组转为逗号分隔
+                    let tagsStr = '';
+                    try {
+                        if (book.tags) {
+                            const arr = JSON.parse(book.tags);
+                            if (Array.isArray(arr)) {
+                                tagsStr = arr.join(', ');
+                            } else {
+                                tagsStr = book.tags;
+                            }
+                        }
+                    } catch (e) {
+                        tagsStr = book.tags;
+                    }
+                    card.innerHTML = `
+                <div class="card-header">
+                    <div class="title">${book.bookName}</div>
+                    <div class="status ${getStatusClass(book.status)}">${getStatusText(book.status)}</div>
+                </div>
+                <div class="card-details">
+                    <p>书籍ID: ${book.id}</p>
+                    <p>分类: ${book.categoryNames}</p>
+                    <p>标签: ${tagsStr}</p>
+                    <p>作者: ${book.author}</p>
+                    <p>出版社: ${book.publish}</p>
+                    <p>定价: ${book.price} 元</p>
+                    <div class="card-actions">${getActionButton(book)}</div>
+                </div>
+            `;
 
                 // 点击展开/收起详细信息
                 card.addEventListener('click', (e) => {

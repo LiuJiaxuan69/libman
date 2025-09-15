@@ -107,6 +107,12 @@
                 <label for="publish">出版社</label>
                 <input type="text" id="publish" name="publish" required maxlength="40" placeholder="请输入出版社">
             </div>
+            <div>
+                <label>分类 (可多选)</label>
+                <div id="donate-categories" style="display:flex;flex-wrap:wrap;gap:8px;">
+                    <!-- 分类复选将由 JS 填充 -->
+                </div>
+            </div>
             <button type="submit" class="submit-btn">捐赠</button>
         </form>
         <div class="msg" id="msg"></div>
@@ -114,6 +120,34 @@
     </div>
 
     <script src="/js/navbar.js"></script>
+    <script>
+        // 加载分类用于捐赠时选择
+        async function loadDonateCategories() {
+            try {
+                const resp = await fetch('/category/list');
+                const body = await resp.json();
+                const cats = body.data || [];
+                const container = document.getElementById('donate-categories');
+                cats.forEach(c => {
+                    const id = c.id;
+                    const name = c.categoryName || c.name || c.category_name || ('#'+id);
+                    const label = document.createElement('label');
+                    label.style.display = 'inline-flex';
+                    label.style.alignItems = 'center';
+                    label.style.gap = '6px';
+                    label.style.padding = '6px 10px';
+                    label.style.border = '1px solid #e9ecef';
+                    label.style.borderRadius = '6px';
+                    label.style.cursor = 'pointer';
+                    label.innerHTML = `<input type="checkbox" value="${id}" /> <span>${name}</span>`;
+                    container.appendChild(label);
+                });
+            } catch (e) {
+                console.error('加载分类失败', e);
+            }
+        }
+        loadDonateCategories();
+    </script>
     <script>
         document.getElementById('donateForm').addEventListener('submit', function(e) {
             e.preventDefault();
@@ -123,6 +157,9 @@
                 price: document.getElementById('price').value,
                 publish: document.getElementById('publish').value.trim()
             };
+            // 收集选中的分类 ID，作为 JSON 字符串传给后端
+            const selected = Array.from(document.querySelectorAll('#donate-categories input[type=checkbox]:checked')).map(ch => parseInt(ch.value, 10));
+            data.categoryIds = JSON.stringify(selected);
             fetch('/book/addBook', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
