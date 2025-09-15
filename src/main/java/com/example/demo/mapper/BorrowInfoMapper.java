@@ -7,6 +7,7 @@ import org.apache.ibatis.annotations.Delete;
 import org.apache.ibatis.annotations.Insert;
 import org.apache.ibatis.annotations.Mapper;
 import org.apache.ibatis.annotations.Select;
+import org.apache.ibatis.annotations.Param;
 import org.apache.ibatis.annotations.Update;
 
 import com.example.demo.model.BorrowInfo;
@@ -41,5 +42,5 @@ public interface BorrowInfoMapper {
         "</foreach>",
         "</script>"
     })
-    List<Integer> queryBorrowedBookIdsByUserAndBookList(@NonNull Integer userId, @NonNull List<@NonNull Integer> bookIdList);
+    List<Integer> queryBorrowedBookIdsByUserAndBookList(@Param("userId") @NonNull Integer userId, @Param("bookIdList") @NonNull List<@NonNull Integer> bookIdList);
 }
