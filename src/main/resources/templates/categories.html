@@ -1,0 +1,737 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>图书列表</title>
+    <link rel="stylesheet" href="/css/navbar.css">
+    <style>
+        body {
+            margin: 0;
+            font-family: Arial, sans-serif;
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .container {
+            flex: 1;
+            display: flex;
+            background: #f5f5f5;
+            height: calc(100vh - 56px);
+        }
+
+        .category-sidebar {
+            width: 200px;
+            background: white;
+            padding: 20px;
+            border-right: 1px solid #eee;
+            overflow-y: auto;
+        }
+
+        .category-item {
+            padding: 8px 12px;
+            margin-bottom: 8px;
+            border-radius: 4px;
+            cursor: pointer;
+            transition: background 0.2s;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .category-item:hover {
+            background: #f0f0f0;
+        }
+
+        .category-item.active {
+            background: #0984e3;
+            color: white;
+        }
+
+        .category-checkbox {
+            width: 16px;
+            height: 16px;
+            border-radius: 3px;
+            border: 1px solid #ddd;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .category-item.active .category-checkbox {
+            background-color: white;
+        }
+
+        .category-item.active .category-checkbox::after {
+            content: "✓";
+            font-size: 12px;
+            color: #0984e3;
+        }
+
+        .book-container {
+            flex: 1;
+            background: white;
+            padding: 20px;
+            overflow-y: auto;
+        }
+
+        .books-scroll-container {
+            display: flex;
+            gap: 20px;
+            padding: 10px 0;
+            overflow-x: auto;
+            scrollbar-width: thin;
+            scrollbar-color: #ccc transparent;
+            min-height: 200px;
+        }
+
+        .books-scroll-container::-webkit-scrollbar {
+            height: 6px;
+        }
+
+        .books-scroll-container::-webkit-scrollbar-thumb {
+            background-color: #ccc;
+            border-radius: 3px;
+        }
+
+        .book-card {
+            min-width: 280px;
+            max-width: 280px;
+            border-radius: 12px;
+            background: #fff;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+            padding: 16px;
+            margin-bottom: 16px;
+            cursor: pointer;
+            transition: transform 0.2s, box-shadow 0.2s;
+            flex-shrink: 0;
+        }
+
+        .book-card:hover {
+            transform: translateY(-4px);
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+        }
+
+        .book-card .card-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            flex-wrap: wrap;
+            gap: 8px;
+        }
+
+        .book-card .title {
+            font-weight: bold;
+            font-size: 1.1em;
+            flex: 1;
+        }
+
+        .book-card .status {
+            font-weight: bold;
+            white-space: nowrap;
+        }
+
+        .status-normal {
+            color: #00b894;
+        }
+
+        .status-forbidden {
+            color: #d35400;
+        }
+
+        .status-deleted {
+            color: #d63031;
+        }
+
+        .book-card .card-details {
+            margin-top: 12px;
+            display: none;
+            font-size: 0.95em;
+            color: #636e72;
+        }
+
+        .book-card.expanded .card-details {
+            display: block;
+        }
+
+        .action-btn {
+            padding: 5px 12px;
+            border: none;
+            border-radius: 4px;
+            font-size: 0.9em;
+            cursor: pointer;
+            margin-left: 8px;
+            transition: background 0.2s;
+        }
+
+        .action-borrow {
+            background: #0984e3;
+            color: #fff;
+        }
+
+        .action-borrow:hover {
+            background: #74b9ff;
+        }
+
+        .action-return {
+            background: #00b894;
+            color: #fff;
+        }
+
+        .action-return:hover {
+            background: #55efc4;
+        }
+
+        .action-disabled {
+            background: #b2bec3;
+            color: #fff;
+            cursor: not-allowed;
+        }
+
+        #toast-container {
+            position: fixed;
+            top: calc(56px + 3%) !important;
+            left: 50%;
+            transform: translateX(-50%);
+            z-index: 9999;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+
+        .toast {
+            min-width: 200px;
+            margin-bottom: 10px;
+            padding: 10px 16px;
+            border-radius: 6px;
+            color: #fff;
+            background-color: rgba(0, 0, 0, 0.7);
+            box-shadow: 0 2px 6px rgba(0, 0, 0, 0.2);
+            opacity: 0;
+            transform: translateY(-20px);
+            transition: all 0.3s ease;
+        }
+
+        .toast.show {
+            opacity: 1;
+            transform: translateY(0);
+        }
+
+        .filter-header {
+            font-weight: bold;
+            margin-bottom: 16px;
+            padding-bottom: 8px;
+            border-bottom: 1px solid #eee;
+        }
+
+        .selected-categories {
+            padding: 10px 20px;
+            background: #f8f9fa;
+            border-bottom: 1px solid #eee;
+            display: flex;
+            align-items: center;
+            flex-wrap: wrap;
+            gap: 8px;
+        }
+
+        .selected-category-tag {
+            background: #0984e3;
+            color: white;
+            padding: 4px 10px;
+            border-radius: 12px;
+            font-size: 0.85em;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .remove-tag {
+            cursor: pointer;
+            font-size: 1.1em;
+            line-height: 1;
+        }
+
+        .clear-all {
+            margin-left: auto;
+            color: #636e72;
+            font-size: 0.9em;
+            cursor: pointer;
+            padding: 4px 8px;
+            border-radius: 4px;
+        }
+
+        .clear-all:hover {
+            background: #e9ecef;
+        }
+    </style>
+</head>
+
+<body>
+    <div th:replace="navbar :: nav"></div>
+    <div id="toast-container"></div>
+    
+    <!-- 主体容器 -->
+    <div class="container">
+        <!-- 分类侧边栏 -->
+        <div class="category-sidebar">
+            <div class="filter-header">图书分类</div>
+            <div class="category-item" data-category-id="all">
+                <div class="category-checkbox"></div>
+                <span>全部图书</span>
+            </div>
+            <!-- 分类将通过JS动态加载 -->
+        </div>
+        
+        <!-- 图书内容区 -->
+        <div class="book-container">
+            <!-- 选中的分类标签 -->
+            <div class="selected-categories">
+                <div class="clear-all" onclick="clearAllCategories()">清除全部</div>
+            </div>
+            
+            <!-- 书籍滚动容器 -->
+            <div class="books-scroll-container">
+                <!-- 书籍卡片将通过JS动态加载 -->
+            </div>
+        </div>
+    </div>
+    
+    <script src="/js/navbar.js"></script>
+    <script>
+        function showToast(message, duration = 2000) {
+            const container = document.getElementById('toast-container');
+            const toast = document.createElement('div');
+            toast.className = 'toast';
+            toast.textContent = message;
+            container.appendChild(toast);
+
+            // 延迟显示
+            setTimeout(() => toast.classList.add('show'), 10);
+
+            // 自动消失
+            setTimeout(() => {
+                toast.classList.remove('show');
+                setTimeout(() => container.removeChild(toast), 300);
+            }, duration);
+        }
+
+        // 全局变量
+        const PAGE_SIZE = 8; // 每次加载数量
+        const initialLoad = 24; // 首次加载数量
+        let localBorrowStatus = {}; // 存储每本书是否被借阅
+        let loading = false; // 加载锁，防止重复加载
+        let Offset = 0; // 偏移量
+        let selectedCategoryIds = new Set(); // 当前选中的分类ID集合，支持多选
+        let categoryMap = new Map(); // 存储分类ID到名称的映射
+        
+        // 加载分类列表
+        function loadCategories() {
+            fetch('/category/list')
+                .then(resp => resp.json())
+                .then(result => {
+                    if (result.status === 'SUCCESS') {
+                        const categories = result.data;
+                        const sidebar = document.querySelector('.category-sidebar');
+                        
+                        // 存储分类映射关系
+                        categories.forEach(category => {
+                            // 存储为字符串键，避免前后端类型不一致导致比较失败
+                            const key = String(category.id);
+                            const name = category.categoryName || category.name || category.category_name || '';
+                            categoryMap.set(key, name);
+                        });
+
+                        categories.forEach(category => {
+                            const item = document.createElement('div');
+                            item.className = 'category-item';
+                            item.dataset.categoryId = category.id;
+                            const displayName = category.categoryName || category.name || category.category_name || '';
+                            item.innerHTML = `
+                                <div class="category-checkbox"></div>
+                                <span>${displayName}</span>
+                            `;
+
+                            item.addEventListener('click', () => {
+                                toggleCategory(String(category.id));
+                            });
+
+                            sidebar.appendChild(item);
+                        });
+                    } else {
+                        console.error('获取分类失败:', result.errorMessage);
+                    }
+                })
+                .catch(err => {
+                    console.error('获取分类时发生错误:', err);
+                });
+        }
+        
+        // 切换分类选择状态
+        function toggleCategory(categoryId) {
+            // 处理"全部"分类的特殊逻辑
+            if (categoryId === 'all') {
+                if (selectedCategoryIds.size > 0) {
+                    // 如果有选中的分类，点击全部则清除所有选择
+                    selectedCategoryIds.clear();
+                } else {
+                    // 如果没有选中的分类，点击全部则选中所有分类
+                    const allCategories = Array.from(categoryMap.keys());
+                    allCategories.forEach(id => selectedCategoryIds.add(id));
+                }
+            } else {
+                // 处理普通分类
+                if (selectedCategoryIds.has(categoryId)) {
+                    selectedCategoryIds.delete(categoryId);
+                } else {
+                    selectedCategoryIds.add(categoryId);
+                }
+            }
+            
+            // 更新UI显示
+            updateCategoryUI();
+            // 重新加载书籍
+            resetAndLoadBooks();
+            // 更新选中标签
+            updateSelectedTags();
+        }
+        
+        // 更新分类UI选中状态
+        function updateCategoryUI() {
+            // 更新全部选项的状态
+            const allItem = document.querySelector('.category-item[data-category-id="all"]');
+            const allCategories = Array.from(categoryMap.keys());
+            const allSelected = allCategories.every(id => selectedCategoryIds.has(id));
+            allItem.classList.toggle('active', allSelected);
+            
+            // 更新其他分类选项的状态
+            document.querySelectorAll('.category-item:not([data-category-id="all"])').forEach(item => {
+                const categoryId = item.dataset.categoryId;
+                item.classList.toggle('active', selectedCategoryIds.has(categoryId));
+            });
+        }
+        
+        // 更新选中的分类标签
+        function updateSelectedTags() {
+            const container = document.querySelector('.selected-categories');
+            // 清除现有标签（保留"清除全部"按钮）
+            const clearAllBtn = container.querySelector('.clear-all');
+            container.innerHTML = '';
+            container.appendChild(clearAllBtn);
+            
+            // 添加选中的分类标签
+            selectedCategoryIds.forEach(categoryId => {
+                const name = categoryMap.get(categoryId) || '未知分类';
+                const tag = document.createElement('div');
+                tag.className = 'selected-category-tag';
+                tag.innerHTML = `
+                    ${name}
+                    <span class="remove-tag" onclick="removeCategory('${categoryId}')">×</span>
+                `;
+                container.insertBefore(tag, clearAllBtn);
+            });
+        }
+        
+        // 移除单个分类
+        function removeCategory(categoryId) {
+            selectedCategoryIds.delete(categoryId);
+            updateCategoryUI();
+            resetAndLoadBooks();
+            updateSelectedTags();
+        }
+        
+        // 清除所有选中分类
+        function clearAllCategories() {
+            selectedCategoryIds.clear();
+            updateCategoryUI();
+            resetAndLoadBooks();
+            updateSelectedTags();
+        }
+        
+        // 重置并加载书籍
+        function resetAndLoadBooks() {
+            // 清空现有书籍
+            document.querySelector('.books-scroll-container').innerHTML = '';
+            // 重置偏移量
+            Offset = 0;
+            // 重新加载
+            loadBooks(initialLoad);
+        }
+
+        // 加载书籍
+        function loadBooks(Count) {
+            if (selectedCategoryIds.size === 0) {
+                // 没有选中任何分类，加载全部书籍
+                return fetch('/book/getListByOffset', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ offset: Offset, count: Count })
+                })
+                .then(resp => resp.json())
+                .then(processBookResponse);
+            } else {
+                // 加载选中分类的书籍
+                return fetch('/book/getBooksByCategoryIds', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(Array.from(selectedCategoryIds))
+                })
+                .then(resp => resp.json())
+                .then(result => {
+                    if (result.status === 'SUCCESS') {
+                        // 模拟分页处理
+                        const allBooks = result.data;
+                        const books = allBooks.slice(Offset, Offset + Count);
+                        
+                        // 更新本地借阅状态缓存
+                        books.forEach(book => {
+                            if (!(book.id in localBorrowStatus)) {
+                                localBorrowStatus[book.id] = book.isBorrowed;
+                            }
+                        });
+
+                        // 渲染书籍卡片
+                        renderBookCards(books);
+                        
+                        // 更新偏移量
+                        Offset += books.length;
+                        
+                        return { data: { records: books } };
+                    } else {
+                        console.error('获取书籍失败:', result.errorMessage);
+                        return { data: { records: [] } };
+                    }
+                });
+            }
+        }
+        
+        // 处理书籍响应
+        function processBookResponse(result) {
+            if (result.status === 'SUCCESS') {
+                const books = result.data.records;
+                // 更新本地借阅状态缓存
+                books.forEach(book => {
+                    if (!(book.id in localBorrowStatus)) {
+                        localBorrowStatus[book.id] = book.isBorrowed;
+                    }
+                });
+
+                // 渲染书籍卡片
+                renderBookCards(books);
+                
+                // 更新偏移量
+                Offset += result.data.records.length;
+            } else {
+                console.error('获取书籍失败:', result.errorMessage);
+            }
+            return result;
+        }
+
+        // 渲染书籍卡片
+        function renderBookCards(books) {
+            const container = document.querySelector('.books-scroll-container');
+
+            books.forEach(book => {
+                const card = document.createElement('div');
+                card.className = 'book-card';
+                card.dataset.bookId = book.id;
+                
+                // 标签格式美化：将JSON数组转为逗号分隔
+                let tagsStr = '';
+                try {
+                    if (book.tags) {
+                        const arr = JSON.parse(book.tags);
+                        if (Array.isArray(arr)) {
+                            tagsStr = arr.join(', ');
+                        } else {
+                            tagsStr = book.tags;
+                        }
+                    }
+                } catch (e) {
+                    tagsStr = book.tags;
+                }
+                
+                card.innerHTML = `
+                    <div class="card-header">
+                        <div class="title">${book.bookName}</div>
+                        <div class="status ${getStatusClass(book.status)}">${getStatusText(book.status)}</div>
+                    </div>
+                    <div class="card-details">
+                        <p>书籍ID: ${book.id}</p>
+                        <p>分类: ${book.categoryNames}</p>
+                        <p>标签: ${tagsStr}</p>
+                        <p>作者: ${book.author}</p>
+                        <p>出版社: ${book.publish}</p>
+                        <p>定价: ${book.price} 元</p>
+                        <div class="card-actions">${getActionButton(book)}</div>
+                    </div>
+                `;
+
+                // 点击展开/收起详细信息
+                card.addEventListener('click', (e) => {
+                    // 防止点击按钮触发卡片展开
+                    if (!e.target.classList.contains('action-btn')) {
+                        card.classList.toggle('expanded');
+                    }
+                });
+
+                container.appendChild(card);
+            });
+        }
+
+        // 根据状态获取文字
+        function getStatusText(status) {
+            switch (status) {
+                case 1: return '可借阅';
+                case 2: return '已借出';
+                case 0: default: return '无效';
+            }
+        }
+
+        // 根据状态获取 class
+        function getStatusClass(status) {
+            switch (status) {
+                case 1: return 'status-normal';
+                case 2: return 'status-forbidden';
+                case 0: default: return 'status-deleted';
+            }
+        }
+
+        // 获取操作按钮
+        function getActionButton(book) {
+            if (book.isBorrowedByMe) {
+                return `<button class="action-btn action-return" onclick="returnBook(${book.id})">归还</button>`;
+            } else if (book.isBorrowed) {
+                return `<button class="action-btn action-disabled" disabled>已借阅</button>`;
+            } else if (book.status === 1) {
+                return `<button class="action-btn action-borrow" onclick="borrowBook(${book.id})">借阅</button>`;
+            } else {
+                return `<button class="action-btn action-disabled" disabled>不可借</button>`;
+            }
+        }
+
+        // 检测是否已加载完所有书籍
+        async function checkIsEnd() {
+            try {
+                const response = await fetch('/book/isEnd', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(Offset) // 已加载数量
+                });
+                const result = await response.json();
+                if (result.status === 'SUCCESS') {
+                    return result.data;
+                } else {
+                    console.error('检测是否加载完毕失败:', result.errorMessage);
+                    return { isEnd: false, remaining: 0 };
+                }
+            } catch (err) {
+                console.error('网络或接口异常:', err);
+                return { isEnd: false, remaining: 0 };
+            }
+        }
+
+        // 滚动加载监听（横向滚动）
+        const scrollContainer = document.querySelector('.books-scroll-container');
+        scrollContainer.addEventListener('scroll', async () => {
+            // 横向滚动到底部附近时加载更多
+            if (scrollContainer.scrollLeft + scrollContainer.clientWidth >= scrollContainer.scrollWidth - 200) {
+                if (loading) return;
+                loading = true;
+
+                try {
+                    // 检查是否还有书未加载
+                    const status = await checkIsEnd();
+                    if (!status.isEnd && status.remaining > 0) {
+                        // 根据剩余数量决定本次请求的数量
+                        const sizeToLoad = Math.min(PAGE_SIZE, status.remaining);
+                        await loadBooks(sizeToLoad);
+                    } else {
+                        console.log('所有书籍已加载完毕');
+                    }
+                } catch (err) {
+                    console.error('加载书籍出错:', err);
+                } finally {
+                    loading = false;
+                }
+            }
+        });
+
+        // 借阅图书
+        function borrowBook(bookId) {
+            fetch('/book/borrowBook', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(bookId)
+            })
+            .then(resp => resp.json())
+            .then(result => {
+                if (result.status === 'SUCCESS') {
+                    localBorrowStatus[bookId] = true;
+                    updateBookCard(bookId);
+                    showToast("借阅成功");
+                } else {
+                    showToast("借阅失败：" + result.errorMessage);
+                }
+            });
+        }
+
+        // 归还图书
+        function returnBook(bookId) {
+            fetch('/book/returnBook', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(bookId)
+            })
+            .then(resp => resp.json())
+            .then(result => {
+                if (result.status === 'SUCCESS') {
+                    localBorrowStatus[bookId] = false;
+                    updateBookCard(bookId);
+                    showToast("归还成功");
+                } else {
+                    showToast("归还失败：" + result.errorMessage);
+                }
+            });
+        }
+
+        // 更新图书卡片状态
+        function updateBookCard(bookId) {
+            const card = document.querySelector(`.book-card[data-book-id='${bookId}']`);
+            if (!card) return;
+
+            const btnDiv = card.querySelector('.card-actions');
+            const statusDiv = card.querySelector('.status');
+
+            const isBorrowed = localBorrowStatus[bookId];
+
+            if (isBorrowed) { // 已借出
+                btnDiv.innerHTML = `<button class="action-btn action-return" onclick="returnBook(${bookId})">归还</button>`;
+                statusDiv.textContent = '已借出';
+                statusDiv.className = 'status status-forbidden';
+            } else { // 可借阅
+                btnDiv.innerHTML = `<button class="action-btn action-borrow" onclick="borrowBook(${bookId})">借阅</button>`;
+                statusDiv.textContent = '可借阅';
+                statusDiv.className = 'status status-normal';
+            }
+        }
+
+        // 初始化
+        function init() {
+            // 加载分类
+            loadCategories();
+            // 加载初始书籍
+            loadBooks(initialLoad);
+            // 为"全部图书"分类添加点击事件
+            document.querySelector('.category-item[data-category-id="all"]').addEventListener('click', () => {
+                toggleCategory('all');
+            });
+        }
+
+        // 页面加载完成后初始化
+        window.onload = init;
+    </script>
+</body>
+
+</html>
