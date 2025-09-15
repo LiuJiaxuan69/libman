@@ -16,6 +16,9 @@ public class BookInfo {
     private String statusCN; /* 后期加工 */
     private Date createTime;
     private Date updateTime;
+    private String categoryIds; // JSON 数组字符串，存储分类 ID 列表
+    private String categoryNames; // 非数据库字段，存储分类名称列表，便于前端显示
+    private String tags; // JSON 数组字符串，存储标签列表
 
     // 非数据库字段，仅用于前端归还按钮判断
     private Boolean isBorrowedByMe;
