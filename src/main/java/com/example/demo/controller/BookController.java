@@ -175,4 +175,12 @@ public class BookController {
         return Result.success(status);
     }
 
+    // 根据 JSON 格式的分类 ID 列表获取对应的书籍列表
+    @RequestMapping("/getBooksByCategoryIds")
+    public Result<java.util.List<BookInfo>> getBooksByCategoryIds(@RequestBody String categoryIdsJson) {
+        log.info("根据 JSON 格式的分类 ID 列表获取对应的书籍列表，分类 ID 列表：{}", categoryIdsJson);
+        java.util.List<BookInfo> books = bookService.getBooksByCategoryIds(categoryIdsJson);
+        log.info("获取到的书籍列表：{}", books);
+        return Result.success(books);
+    }
 }
