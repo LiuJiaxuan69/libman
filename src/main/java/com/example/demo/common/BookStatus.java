@@ -3,7 +3,8 @@ package com.example.demo.common;
 public enum BookStatus {
     DELETED(0, "无效"),
     NORMAL(1, "可借阅"),
-    FORBIDDEN(2, "已借出");
+    FORBIDDEN(2, "已借出"),
+    NOTEXIST(3, "不存在");
 
     private Integer code;
     private String name;
@@ -18,6 +19,7 @@ public enum BookStatus {
             case 0: return DELETED;
             case 1: return NORMAL;
             case 2: return FORBIDDEN;
+            case 3: return NOTEXIST;
         }
         return null;
     }
