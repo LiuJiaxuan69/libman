@@ -85,7 +85,6 @@ public class BookService {
 
         // 先存入数据库，保证数据库成功后再更新 Redis
         boolean inserted = bookInfoMapper.insertBook(bookInfo) > 0;
-
         if (inserted) {
             // 更新 Redis 索引
             redisTemplate.opsForZSet().add(BOOK_INDEX_KEY, bookInfo.getId(), index++);
@@ -95,35 +94,49 @@ public class BookService {
                 List<Integer> cats = new ArrayList<>();
                 try {
                     ObjectMapper mapper = new ObjectMapper();
-                    cats = mapper.readValue(categoryIdsJson, new TypeReference<List<Integer>>() {});
+                    cats = mapper.readValue(categoryIdsJson, new TypeReference<List<Integer>>() {
+                    });
                 } catch (Exception ex) {
                     String trimmed = categoryIdsJson.replaceAll("\\[|\\]", "").trim();
                     if (!trimmed.isEmpty()) {
                         String[] parts = trimmed.split(",");
                         for (String p : parts) {
-                            try { cats.add(Integer.parseInt(p.trim())); } catch (NumberFormatException ignore) {}
+                            try {
+                                cats.add(Integer.parseInt(p.trim()));
+                            } catch (NumberFormatException ignore) {
+                            }
                         }
                     }
                 }
-
                 if (!cats.isEmpty()) {
                     final List<Integer> toAdd = cats;
-                    CompletableFuture.runAsync(() -> {
-                        redisTemplate.executePipelined(new SessionCallback<Object>() {
-                            @Override
-                            @SuppressWarnings({ "rawtypes", "unchecked" })
-                            public Object execute(RedisOperations operations) throws DataAccessException {
-                                for (Integer c : toAdd) {
-                                    String key = "category:books:" + c;
-                                    if (operations.hasKey(key)) {
+
+                    // 先同步检查哪些 key 存在
+                    List<Integer> existingKeys = new ArrayList<>();
+                    for (Integer c : toAdd) {
+                        String key = "category:books:" + c;
+                        if (redisTemplate.hasKey(key)) { // 同步检查
+                            existingKeys.add(c);
+                        }
+                    }
+
+                    if (!existingKeys.isEmpty()) {
+                        CompletableFuture.runAsync(() -> {
+                            redisTemplate.executePipelined(new SessionCallback<Object>() {
+                                @Override
+                                @SuppressWarnings({ "rawtypes", "unchecked" })
+                                public Object execute(RedisOperations operations) throws DataAccessException {
+                                    for (Integer c : existingKeys) {
+                                        String key = "category:books:" + c;
                                         operations.opsForSet().add(key, bookInfo.getId());
                                     }
+                                    return null;
                                 }
-                                return null;
-                            }
+                            });
                         });
-                    });
+                    }
                 }
+
             }
         }
 
@@ -254,11 +267,14 @@ public class BookService {
 
     // 借阅图书
     @Transactional
-    public boolean borrowBook(Integer userId, Integer bookId) {
+    public BookStatus borrowBook(Integer userId, Integer bookId) {
         // 检查图书是否存在
         BookInfo bookInfo = bookInfoMapper.queryBookById(bookId);
-        if (bookInfo == null || bookInfo.getStatus() != BookStatus.NORMAL.getCode()) {
-            return false; // 图书不存在或不可借阅
+        if(bookInfo == null) {
+            return BookStatus.NOTEXIST; // 图书不存在
+        }
+        if (bookInfo.getStatus() != BookStatus.NORMAL.getCode()) {
+            return BookStatus.getNameByCode(bookInfo.getStatus()); // 图书不可借阅
         }
 
         // 更新图书状态为借出
@@ -269,14 +285,14 @@ public class BookService {
         borrowInfo.setBookId(bookId);
         borrowInfo.setUserId(userId);
         if (borrowInfoMapper.insertBorrowInfo(borrowInfo) < 0)
-            return false;
+            return BookStatus.DELETED; // 插入借阅信息失败，回滚并返回可借阅状态
         borrowInfo = borrowInfoMapper.queryBorrowInfoByUserIdAndBookId(bookId, userId);
         if (borrowHistoryMapper.insertBorrowInfo(borrowInfo) < 0)
-            return false;
+            return BookStatus.DELETED;
 
         bookInfo.setStatus(BookStatus.FORBIDDEN.getCode());
         saveBookToRedis(bookInfo); // 更新缓存
-        return true;
+        return BookStatus.NORMAL;
     }
 
     // 归还图书
@@ -309,8 +325,10 @@ public class BookService {
     public List<String> getCategoryNamesByJsonIds(String categoryIdsJson) {
         return bookCategoryMapper.getCategoryNamesByJsonIds(categoryIdsJson);
     }
+
     // 根据图书分类 ID 的 JSON 数组获取所有同时具有这些分类的图书
-    public List<BookInfo> getBooksByCategoryIds(String categoryIdsJson) {
+    // 支持 mode：1=交集，2=并集
+    public List<BookInfo> getBooksByCategoryIds(String categoryIdsJson, int modeCode) {
         // 首先将JSON数组字符串转换为List<Integer>
         List<Integer> categoryIds = new ArrayList<>();
         if (categoryIdsJson != null && !categoryIdsJson.isBlank()) {
@@ -319,7 +337,8 @@ public class BookService {
                 categoryIds = mapper.readValue(categoryIdsJson, new TypeReference<List<Integer>>() {
                 });
             } catch (Exception ex) {
-                logger.warning("Failed to parse categoryIds JSON with Jackson, falling back to manual parse: " + ex.getMessage());
+                logger.warning("Failed to parse categoryIds JSON with Jackson, falling back to manual parse: "
+                        + ex.getMessage());
                 // fallback: try simple comma separated numbers inside brackets
                 String trimmed = categoryIdsJson.replaceAll("\\[|\\]", "").trim();
                 if (!trimmed.isEmpty()) {
@@ -333,9 +352,12 @@ public class BookService {
                 }
             }
         }
-        
+
         // 如果没有分类ID，返回空
-        if (categoryIds.isEmpty()) return new ArrayList<>();
+        if (categoryIds.isEmpty())
+            return new ArrayList<>();
+
+        com.example.demo.common.CategoryQueryMode mode = com.example.demo.common.CategoryQueryMode.fromCode(modeCode);
 
         // 1) 批量 pipeline 读取所有 category:books:<id>（使用 Set 存储每个分类的书ID）
         List<String> redisKeys = categoryIds.stream().map(id -> "category:books:" + id).collect(Collectors.toList());
@@ -350,9 +372,10 @@ public class BookService {
             }
         });
 
-        // 2) 解析 pipeline 结果并增量计算交集（拿到每个集合就合并），减少内存占用并能早退出
+        // 2) 解析 pipeline 结果并增量计算集合（交集或并集），减少内存占用并能早退出
         List<Integer> missingCatIds = new ArrayList<>();
-        Set<Integer> intersection = null;
+        Set<Integer> resultSet = null;
+        boolean isIntersection = mode == com.example.demo.common.CategoryQueryMode.INTERSECTION;
         for (int i = 0; i < pipelineResults.size(); i++) {
             Object res = pipelineResults.get(i);
             Integer catId = categoryIds.get(i);
@@ -360,27 +383,33 @@ public class BookService {
                 missingCatIds.add(catId);
                 continue;
             }
-                @SuppressWarnings("unchecked")
-                Set<Object> members = (Set<Object>) res;
-                if (members == null || members.isEmpty()) {
+            @SuppressWarnings("unchecked")
+            Set<Object> members = (Set<Object>) res;
+            if (members == null || members.isEmpty()) {
                 missingCatIds.add(catId);
                 continue;
             }
             // 转为 Integer 集合（注意可能有占位 -1）；兼容 MyBatis/JDBC 返回 Long 等 Number 类型
             Set<Integer> ids = members.stream().map(o -> {
-                if (o instanceof Number) return ((Number) o).intValue();
-                try { return Integer.parseInt(String.valueOf(o)); } catch (Exception ex) { return null; }
+                if (o instanceof Number)
+                    return ((Number) o).intValue();
+                try {
+                    return Integer.parseInt(String.valueOf(o));
+                } catch (Exception ex) {
+                    return null;
+                }
             }).filter(x -> x != null).collect(Collectors.toSet());
-            if (ids.contains(-1)) {
+            if (isIntersection && ids.contains(-1)) {
                 // 占位表示空集合，交集即空，直接返回
                 return new ArrayList<>();
             }
-            if (intersection == null) {
-                intersection = new HashSet<>(ids);
+            if (resultSet == null) {
+                resultSet = new HashSet<>(ids);
             } else {
-                intersection.retainAll(ids);
+                if (isIntersection) resultSet.retainAll(ids);
+                else resultSet.addAll(ids);
             }
-            if (intersection.isEmpty()) return new ArrayList<>();
+            if (isIntersection && resultSet.isEmpty()) return new ArrayList<>();
         }
 
         // 3) 对于缺失的分类，一次性从 DB 批量查询 category->book 关系并增量合并交集
@@ -392,9 +421,16 @@ public class BookService {
                 Object bObj = row.get("bookId");
                 Integer cId = null;
                 Integer bId = null;
-                if (cObj instanceof Number) cId = ((Number) cObj).intValue(); else if (cObj != null) cId = Integer.parseInt(String.valueOf(cObj));
-                if (bObj instanceof Number) bId = ((Number) bObj).intValue(); else if (bObj != null) bId = Integer.parseInt(String.valueOf(bObj));
-                if (cId == null || bId == null) continue;
+                if (cObj instanceof Number)
+                    cId = ((Number) cObj).intValue();
+                else if (cObj != null)
+                    cId = Integer.parseInt(String.valueOf(cObj));
+                if (bObj instanceof Number)
+                    bId = ((Number) bObj).intValue();
+                else if (bObj != null)
+                    bId = Integer.parseInt(String.valueOf(bObj));
+                if (cId == null || bId == null)
+                    continue;
                 Set<Integer> s = catToBookIds.get(cId);
                 if (s == null) {
                     s = new HashSet<>();
@@ -425,23 +461,25 @@ public class BookService {
                 });
             });
 
-            // 增量合并从 DB 得到的集合到交集中
+            // 增量合并从 DB 得到的集合到 resultSet（交集或并集）
             for (Integer cId : missingCatIds) {
                 Set<Integer> ids = catToBookIds.getOrDefault(cId, java.util.Collections.emptySet());
                 if (ids.isEmpty()) {
-                    return new ArrayList<>();
+                    if (isIntersection) return new ArrayList<>();
+                    else continue;
                 }
-                if (intersection == null) {
-                    intersection = new HashSet<>(ids);
+                if (resultSet == null) {
+                    resultSet = new HashSet<>(ids);
                 } else {
-                    intersection.retainAll(ids);
+                    if (isIntersection) resultSet.retainAll(ids);
+                    else resultSet.addAll(ids);
                 }
-                if (intersection.isEmpty()) return new ArrayList<>();
+                if (isIntersection && resultSet.isEmpty()) return new ArrayList<>();
             }
         }
 
-        if (intersection == null || intersection.isEmpty()) return new ArrayList<>();
-        List<Integer> finalBookIds = new ArrayList<>(intersection);
+        if (resultSet == null || resultSet.isEmpty()) return new ArrayList<>();
+        List<Integer> finalBookIds = new ArrayList<>(resultSet);
         return fetchBooksByIds(finalBookIds, null);
     }
 
@@ -451,7 +489,8 @@ public class BookService {
      */
     private List<BookInfo> fetchBooksByIds(List<Integer> bookIdList, Integer userId) {
         List<BookInfo> result = new ArrayList<>();
-        if (bookIdList == null || bookIdList.isEmpty()) return result;
+        if (bookIdList == null || bookIdList.isEmpty())
+            return result;
 
         List<BookInfo> booksFromCache = new ArrayList<>();
         List<Integer> missIds = new ArrayList<>();
