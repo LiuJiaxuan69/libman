@@ -330,10 +330,199 @@
         let Offset = 0; // 偏移量
         let selectedCategoryIds = new Set(); // 当前选中的分类ID集合，支持多选
         let categoryMap = new Map(); // 存储分类ID到名称的映射
+        const LOCAL_BORROW_KEY = 'borrowed_books';
+
+        function loadBorrowedSet() {
+            try {
+                const raw = localStorage.getItem(LOCAL_BORROW_KEY);
+                if (!raw) return new Set();
+                const arr = JSON.parse(raw);
+                return new Set(arr.map(x => Number(x)));
+            } catch (e) {
+                return new Set();
+            }
+        }
+
+        const borrowedLocalSet = loadBorrowedSet();
+
+        function saveBorrowedSet() {
+            try {
+                localStorage.setItem(LOCAL_BORROW_KEY, JSON.stringify(Array.from(borrowedLocalSet)));
+            } catch (e) {
+                // ignore
+            }
+        }
+
+        function addBorrowedId(id) {
+            borrowedLocalSet.add(Number(id));
+            saveBorrowedSet();
+        }
+
+        function removeBorrowedId(id) {
+            borrowedLocalSet.delete(Number(id));
+            saveBorrowedSet();
+        }
+
+        // -----------------------
+        // Local cache helpers with FIFO-half eviction
+        // -----------------------
+        const GLOBAL_INDEX_CAP = 500; // max entries in global index
+        const CATEGORY_CAP = 200; // max entries per category
+
+        function loadJson(key) {
+            try { const raw = localStorage.getItem(key); return raw ? JSON.parse(raw) : null; } catch(e){ return null; }
+        }
+
+        function saveJson(key, val) {
+            try { localStorage.setItem(key, JSON.stringify(val)); } catch(e) { console.warn('saveJson failed', key, e); }
+        }
+
+        function saveBooksIndex(books) {
+            try {
+                // books expected to be an array -> convert to map by id for index storage
+                const map = {};
+                if (Array.isArray(books)) {
+                    books.forEach(b => { const id = String(b.id || b.bookId || b.bid || b.book_id); map[id] = b; });
+                } else if (books && typeof books === 'object') {
+                    Object.assign(map, books);
+                }
+
+                // maintain insertion order
+                let order = loadJson('books_index_order') || [];
+                for (const id of Object.keys(map)) {
+                    if (!order.includes(id)) order.push(id);
+                }
+
+                // eviction if too large
+                if (order.length > GLOBAL_INDEX_CAP) {
+                    const evictCount = Math.floor(GLOBAL_INDEX_CAP / 2);
+                    const toEvict = order.splice(0, evictCount);
+                    for (const eid of toEvict) delete map[eid];
+                    console.debug('books_index eviction', { evicted: toEvict.length, remaining: order.length });
+                }
+
+                saveJson('books_index_order', order);
+                saveJson('books_index', map);
+                saveJson('books_meta', { lastUpdated: Date.now() });
+            } catch (e) { console.warn('saveBooksIndex failed', e); }
+        }
+
+        function loadBooksIndex() {
+            const map = loadJson('books_index');
+            if (!map) return null;
+            // return as array ordered by order array
+            const order = loadJson('books_index_order') || Object.keys(map);
+            const arr = [];
+            for (const id of order) {
+                if (map[id]) arr.push(map[id]);
+            }
+            return arr;
+        }
+
+        function saveBooksByCategory(catId, books) {
+            try {
+                const key = `books_by_category_${catId}`;
+                const orderKey = `books_by_category_${catId}_order`;
+
+                // normalize to map for easier deletion
+                const map = {};
+                if (Array.isArray(books)) {
+                    books.forEach(b => { const id = String(b.id || b.bookId || b.bid || b.book_id); map[id] = b; });
+                }
+
+                let order = loadJson(orderKey) || [];
+                for (const id of Object.keys(map)) { if (!order.includes(id)) order.push(id); }
+
+                if (order.length > CATEGORY_CAP) {
+                    const evictCount = Math.floor(CATEGORY_CAP / 2);
+                    const toEvict = order.splice(0, evictCount);
+                    for (const eid of toEvict) delete map[eid];
+                    console.debug('books_by_category eviction', { catId, evicted: toEvict.length, remaining: order.length });
+                }
+
+                // rebuild array in order
+                const out = [];
+                for (const id of order) { if (map[id]) out.push(map[id]); }
+                saveJson(orderKey, order);
+                saveJson(key, out);
+            } catch (e) { console.warn('saveBooksByCategory failed', e); }
+        }
+
+        function loadBooksByCategory(catId) {
+            try { const key = `books_by_category_${catId}`; const raw = localStorage.getItem(key); return raw ? JSON.parse(raw) : null; } catch(e){ return null; }
+        }
+
+        function addOrUpdateBookInCaches(book) {
+            try {
+                const id = String(book.id || book.bookId || book.bid || book.book_id);
+
+                // update global index map
+                const idxMap = loadJson('books_index') || {};
+                idxMap[id] = Object.assign({}, idxMap[id] || {}, book);
+                saveBooksIndex(idxMap);
+
+                // update per-category caches
+                const cats = (() => { try { return JSON.parse(book.categoryIds||'[]'); } catch(e){ return []; }})();
+                cats.forEach(c => {
+                    const arr = loadBooksByCategory(c) || [];
+                    const j = arr.findIndex(b => String(b.id || b.bookId || b.bid || b.book_id) === id);
+                    if (j >= 0) arr[j] = Object.assign({}, arr[j], book);
+                    else arr.unshift(book);
+                    saveBooksByCategory(c, arr);
+                });
+            } catch(e) { console.warn('cache update failed', e); }
+        }
+
+        function removeBookFromCaches(bookId) {
+            try {
+                const idx = loadBooksIndex();
+                if (Array.isArray(idx)) {
+                    const newIdx = idx.filter(b => b.id !== bookId);
+                    saveBooksIndex(newIdx);
+                }
+                // remove from all category caches
+                for (const k in localStorage) {
+                    if (!k.startsWith('books_by_category_')) continue;
+                    try {
+                        const arr = JSON.parse(localStorage.getItem(k) || '[]');
+                        const newArr = arr.filter(b => b.id !== bookId);
+                        localStorage.setItem(k, JSON.stringify(newArr));
+                    } catch(e) {}
+                }
+            } catch(e) { console.warn('cache remove failed', e); }
+        }
+
+        // -----------------------
+        // SSE client (update local caches on events)
+        // -----------------------
+        function startSse() {
+            if (!window.EventSource) return;
+            try {
+                const es = new EventSource('/book/subscribe');
+                es.addEventListener('connected', () => console.info('SSE connected'));
+                es.addEventListener('bookAdded', e => {
+                    try { const book = JSON.parse(e.data); addOrUpdateBookInCaches(book); maybeInsertCardIfVisible(book); } catch(_){}
+                });
+                es.addEventListener('bookUpdated', e => {
+                    try { const payload = JSON.parse(e.data); const book = payload.payload || payload; addOrUpdateBookInCaches(book); updateCardIfVisible(book); } catch(_){}
+                });
+                es.addEventListener('bookDeleted', e => {
+                    try { const payload = JSON.parse(e.data); removeBookFromCaches(payload.id); removeCardIfVisible(payload.id); } catch(_){}
+                });
+                es.addEventListener('bookBorrowed', e => {
+                    try { const book = JSON.parse(e.data); addOrUpdateBookInCaches(book); updateCardIfVisible(book); } catch(_){}
+                });
+                es.addEventListener('bookReturned', e => {
+                    try { const book = JSON.parse(e.data); addOrUpdateBookInCaches(book); updateCardIfVisible(book); } catch(_){}
+                });
+                es.onerror = () => { es.close(); setTimeout(startSse, 3000); };
+            } catch (ex) { console.warn('SSE start failed', ex); }
+        }
         
         // 加载分类列表
         function loadCategories() {
-            fetch('/category/list')
+            // 返回 Promise 以便上层测时
+            return fetch('/category/list')
                 .then(resp => resp.json())
                 .then(result => {
                     if (result.status === 'SUCCESS') {
@@ -367,9 +556,11 @@
                     } else {
                         console.error('获取分类失败:', result.errorMessage);
                     }
+                    return result;
                 })
                 .catch(err => {
                     console.error('获取分类时发生错误:', err);
+                    throw err;
                 });
         }
         
@@ -467,17 +658,48 @@
         // 加载书籍
         function loadBooks(Count) {
             if (selectedCategoryIds.size === 0) {
-                // 没有选中任何分类，加载全部书籍
+                // 没有选中任何分类，尝试从本地缓存读取 index
+                const local = loadBooksIndex();
+                if (local && local.length > 0) {
+                    const slice = local.slice(Offset, Offset + Count);
+                    renderBookCards(slice);
+                    Offset += slice.length;
+                    return Promise.resolve({ data: { records: slice } });
+                }
+                // 本地没有则回退到远端
                 return fetch('/book/getListByOffset', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ offset: Offset, count: Count })
                 })
                 .then(resp => resp.json())
-                .then(processBookResponse);
+                .then(result => {
+                    if (result.status === 'SUCCESS') {
+                        // write to local cache (index)
+                        try { saveBooksIndex(result.data.records); } catch(e){}
+                    }
+                    return processBookResponse(result);
+                });
             } else {
                 // 加载选中分类的书籍，发送 mode 参数（1=交集,2=并集）
                 const mode = document.querySelector('input[name="catMode"]:checked').value;
+                // 尝试从本地缓存读取并合并多个分类（这里简单取并集）
+                const combined = [];
+                selectedCategoryIds.forEach(cid => {
+                    const arr = loadBooksByCategory(cid);
+                    if (Array.isArray(arr)) {
+                        arr.forEach(b => { if (!combined.find(x=>x.id===b.id)) combined.push(b); });
+                    }
+                });
+                if (combined.length > 0) {
+                    const books = combined.slice(Offset, Offset + Count);
+                    books.forEach(book => { if (!(book.id in localBorrowStatus)) localBorrowStatus[book.id] = book.isBorrowed; });
+                    renderBookCards(books);
+                    Offset += books.length;
+                    return Promise.resolve({ data: { records: books } });
+                }
+
+                // 本地没有则回退到远端
                 return fetch('/book/getBooksByCategoryIds', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
@@ -486,23 +708,14 @@
                 .then(resp => resp.json())
                 .then(result => {
                     if (result.status === 'SUCCESS') {
-                        // 模拟分页处理
+                        // write to local cache for each category
                         const allBooks = result.data;
+                        // save per-category lists
+                        selectedCategoryIds.forEach(cid => saveBooksByCategory(cid, allBooks));
                         const books = allBooks.slice(Offset, Offset + Count);
-                        
-                        // 更新本地借阅状态缓存
-                        books.forEach(book => {
-                            if (!(book.id in localBorrowStatus)) {
-                                localBorrowStatus[book.id] = book.isBorrowed;
-                            }
-                        });
-
-                        // 渲染书籍卡片
+                        books.forEach(book => { if (!(book.id in localBorrowStatus)) localBorrowStatus[book.id] = book.isBorrowed; });
                         renderBookCards(books);
-                        
-                        // 更新偏移量
                         Offset += books.length;
-                        
                         return { data: { records: books } };
                     } else {
                         console.error('获取书籍失败:', result.errorMessage);
@@ -605,8 +818,13 @@
         }
 
         // 获取操作按钮
+        let processingBooks = {};
         function getActionButton(book) {
-            if (book.isBorrowedByMe) {
+            if (processingBooks[book.id]) {
+                return `<button class="action-btn action-disabled" disabled>处理中...</button>`;
+            }
+            const isMyBorrow = borrowedLocalSet.has(Number(book.id));
+            if (isMyBorrow) {
                 return `<button class="action-btn action-return" onclick="returnBook(${book.id})">归还</button>`;
             } else if (book.isBorrowed) {
                 return `<button class="action-btn action-disabled" disabled>已借阅</button>`;
@@ -666,6 +884,10 @@
 
         // 借阅图书
         function borrowBook(bookId) {
+            if (processingBooks[bookId]) return;
+            processingBooks[bookId] = true;
+            const cardBtn = document.querySelector(`.book-card[data-book-id='${bookId}'] .card-actions button`);
+            if (cardBtn) { cardBtn.disabled = true; cardBtn.classList.add('action-disabled'); cardBtn.textContent = '处理中...'; }
             fetch('/book/borrowBook', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -673,18 +895,32 @@
             })
             .then(resp => resp.json())
             .then(result => {
+                processingBooks[bookId] = false;
                 if (result.status === 'SUCCESS') {
                     localBorrowStatus[bookId] = true;
+                    addBorrowedId(bookId);
                     updateBookCard(bookId);
                     showToast("借阅成功");
+                    // start cooldown like index
+                    startCooldown && startCooldown(bookId, 3);
                 } else {
+                    if (cardBtn) { cardBtn.disabled = false; cardBtn.classList.remove('action-disabled'); cardBtn.textContent = '借阅'; }
                     showToast("借阅失败：" + result.errorMessage);
                 }
+            })
+            .catch(err => {
+                processingBooks[bookId] = false;
+                if (cardBtn) { cardBtn.disabled = false; cardBtn.classList.remove('action-disabled'); cardBtn.textContent = '借阅'; }
+                showToast('网络或接口异常');
             });
         }
 
         // 归还图书
         function returnBook(bookId) {
+            if (processingBooks[bookId]) return;
+            processingBooks[bookId] = true;
+            const cardBtn = document.querySelector(`.book-card[data-book-id='${bookId}'] .card-actions button`);
+            if (cardBtn) { cardBtn.disabled = true; cardBtn.classList.add('action-disabled'); cardBtn.textContent = '处理中...'; }
             fetch('/book/returnBook', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -692,13 +928,22 @@
             })
             .then(resp => resp.json())
             .then(result => {
+                processingBooks[bookId] = false;
                 if (result.status === 'SUCCESS') {
                     localBorrowStatus[bookId] = false;
+                    removeBorrowedId(bookId);
                     updateBookCard(bookId);
                     showToast("归还成功");
+                    startCooldown && startCooldown(bookId, 3);
                 } else {
+                    if (cardBtn) { cardBtn.disabled = false; cardBtn.classList.remove('action-disabled'); cardBtn.textContent = '归还'; }
                     showToast("归还失败：" + result.errorMessage);
                 }
+            })
+            .catch(err => {
+                processingBooks[bookId] = false;
+                if (cardBtn) { cardBtn.disabled = false; cardBtn.classList.remove('action-disabled'); cardBtn.textContent = '归还'; }
+                showToast('网络或接口异常');
             });
         }
 
@@ -711,39 +956,121 @@
             const statusDiv = card.querySelector('.status');
 
             const isBorrowed = localBorrowStatus[bookId];
-
-            if (isBorrowed) { // 已借出
-                btnDiv.innerHTML = `<button class="action-btn action-return" onclick="returnBook(${bookId})">归还</button>`;
+            if (processingBooks[bookId]) {
+                btnDiv.innerHTML = `<button class="action-btn action-disabled" disabled>处理中...</button>`;
+            } else if (isBorrowed) { // 已借出
+                if (card.dataset.cooldown && Number(card.dataset.cooldown) > 0) {
+                    btnDiv.innerHTML = `<button class="action-btn action-disabled" disabled>${card.dataset.cooldown}</button>`;
+                } else {
+                    btnDiv.innerHTML = `<button class="action-btn action-return" onclick="returnBook(${bookId})">归还</button>`;
+                }
                 statusDiv.textContent = '已借出';
                 statusDiv.className = 'status status-forbidden';
             } else { // 可借阅
-                btnDiv.innerHTML = `<button class="action-btn action-borrow" onclick="borrowBook(${bookId})">借阅</button>`;
+                if (card.dataset.cooldown && Number(card.dataset.cooldown) > 0) {
+                    btnDiv.innerHTML = `<button class="action-btn action-disabled" disabled>${card.dataset.cooldown}</button>`;
+                } else {
+                    const isMyBorrow = borrowedLocalSet.has(Number(bookId));
+                    if (isMyBorrow) {
+                        btnDiv.innerHTML = `<button class="action-btn action-return" onclick="returnBook(${bookId})">归还</button>`;
+                    } else {
+                        btnDiv.innerHTML = `<button class="action-btn action-borrow" onclick="borrowBook(${bookId})">借阅</button>`;
+                    }
+                }
                 statusDiv.textContent = '可借阅';
                 statusDiv.className = 'status status-normal';
             }
         }
 
-        // 初始化
-        function init() {
-            // 加载分类
-            loadCategories();
-            // 加载初始书籍
-            loadBooks(initialLoad);
-            // 为"全部图书"分类添加点击事件
-            document.querySelector('.category-item[data-category-id="all"]').addEventListener('click', () => {
-                toggleCategory('all');
-            });
-            // 为匹配模式的 radio 添加 change 事件，切换模式时重新加载书籍
-            document.querySelectorAll('input[name="catMode"]').forEach(r => {
-                r.addEventListener('change', () => {
-                    // 切换模式时刷新右侧书籍展示
-                    resetAndLoadBooks();
-                });
-            });
+        function startCooldown(bookId, seconds) {
+            const card = document.querySelector(`.book-card[data-book-id='${bookId}']`);
+            if (!card) { processingBooks[bookId] = false; return; }
+            card.dataset.cooldown = seconds;
+            const btnDiv = card.querySelector('.card-actions');
+            // initial render
+            updateBookCard(bookId);
+            const interval = setInterval(() => {
+                let s = Number(card.dataset.cooldown) - 1;
+                if (s <= 0) {
+                    delete card.dataset.cooldown;
+                    clearInterval(interval);
+                    processingBooks[bookId] = false;
+                    updateBookCard(bookId);
+                } else {
+                    card.dataset.cooldown = s;
+                    if (btnDiv) btnDiv.innerHTML = `<button class="action-btn action-disabled" disabled>${s}</button>`;
+                }
+            }, 1000);
         }
 
-        // 页面加载完成后初始化
-        window.onload = init;
+        // 初始化
+        function init() {
+            // 计时开始：分类加载
+            console.time('init.loadCategories');
+            // 加载分类（返回 Promise）
+            loadCategories()
+                .then(() => {
+                    console.timeEnd('init.loadCategories');
+
+                    // 计时开始：书籍加载
+                    console.time('init.loadBooks');
+                    return loadBooks(initialLoad);
+                })
+                .then(() => {
+                    console.timeEnd('init.loadBooks');
+
+                    // 计时开始：事件绑定
+                    console.time('init.eventBinding');
+                    // 为"全部图书"分类添加点击事件
+                    const allElem = document.querySelector('.category-item[data-category-id="all"]');
+                    if (allElem) {
+                        allElem.addEventListener('click', () => {
+                            toggleCategory('all');
+                        });
+                    }
+                    // 为匹配模式的 radio 添加 change 事件，切换模式时重新加载书籍
+                    document.querySelectorAll('input[name="catMode"]').forEach(r => {
+                        r.addEventListener('change', () => {
+                            // 切换模式时刷新右侧书籍展示
+                            resetAndLoadBooks();
+                        });
+                    });
+                    console.timeEnd('init.eventBinding');
+                })
+                .catch(err => {
+                    // 任何一步失败都打印错误并结束所有计时（若未结束则结束）
+                    try { console.timeEnd('init.loadCategories'); } catch(e){}
+                    try { console.timeEnd('init.loadBooks'); } catch(e){}
+                    try { console.timeEnd('init.eventBinding'); } catch(e){}
+                    console.error('初始化时发生错误:', err);
+                });
+        }
+
+        // 页面层级性能打印：在 DOMContentLoaded 时记录导航/资源时间点
+        document.addEventListener('DOMContentLoaded', () => {
+            try {
+                // 导航到 DOMContentLoaded 的时间
+                const nav = performance.getEntriesByType('navigation')[0];
+                if (nav) {
+                    console.info('page.timing:', {
+                        navigationStart: nav.startTime || performance.timing.navigationStart,
+                        domContentLoadedEventEnd: nav.domContentLoadedEventEnd,
+                        loadEventEnd: nav.loadEventEnd
+                    });
+                }
+
+                // 列出耗时最长的前10个资源（按 duration 排序）
+                const resources = performance.getEntriesByType('resource') || [];
+                const top = Array.from(resources).sort((a,b) => b.duration - a.duration).slice(0,10).map(r => ({name: r.name, initiatorType: r.initiatorType, duration: Math.round(r.duration)}));
+                console.info('top.resource.timings:', top);
+            } catch (e) {
+                console.warn('性能 API 读取失败', e);
+            }
+
+            // start SSE connection early
+            try { startSse(); } catch(e) {}
+            init();
+        });
     </script>
 </body>
 

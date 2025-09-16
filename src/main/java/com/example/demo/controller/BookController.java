@@ -19,6 +19,8 @@ import com.example.demo.service.BookService;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpSession;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
+import org.springframework.web.bind.annotation.GetMapping;
 
 
 @Slf4j
@@ -27,11 +29,15 @@ import lombok.extern.slf4j.Slf4j;
 public class BookController {
     @Autowired
     private BookService bookService;
+    @Autowired
+    private com.example.demo.mapper.BookInfoMapper bookInfoMapper;
+
+    @Autowired
+    private com.example.demo.service.SseService sseService;
 
     // 分页获取书籍信息
     @RequestMapping("/getListByPage")
     public Result<PageResult<BookInfo>> getListByPage(@RequestBody PageRequest pageRequest, HttpServletRequest request) {
-        log.info("获取图书列表，当前页：{}, 每页记录数：{}", pageRequest.getCurrentPage(), pageRequest.getPageSize());
         Integer userId = null;
         HttpSession session = request.getSession(false);
         if (session != null) {
@@ -42,14 +48,12 @@ public class BookController {
         }
         // 调用 service 层方法获取数据
         PageResult<BookInfo> pageResult = bookService.getBookListByPage(pageRequest, userId);
-        log.info("获取图书列表成功，详细信息如下：{}", pageResult);
         return Result.success(pageResult);
     }
 
     // 按照偏移量分页获取书籍信息
     @RequestMapping("/getListByOffset")
     public Result<PageResult<BookInfo>> getBookListByOffset(@RequestBody OffsetRequest offsetRequest, HttpServletRequest request) {
-        log.info("获取图书列表，偏移量：{}, 每页记录数：{}", offsetRequest.getOffset(), offsetRequest.getCount());
         Integer userId = null;
         HttpSession session = request.getSession(false);
         if (session != null) {
@@ -60,7 +64,6 @@ public class BookController {
         }
         // 调用 service 层方法获取数据
         PageResult<BookInfo> pageResult = bookService.getBookListByOffset(offsetRequest.getOffset(), offsetRequest.getCount(), userId);
-        log.info("获取图书列表成功，详细信息如下：{}", pageResult);
         return Result.success(pageResult);
     }
     // 获取首页分页信息
@@ -69,7 +72,6 @@ public class BookController {
         PageRequest pageRequest = new PageRequest();
         pageRequest.setCurrentPage(1);
         pageRequest.setPageSize(10);
-        log.info("获取首页图书列表，当前页：{}, 每页记录数：{}", pageRequest.getCurrentPage(), pageRequest.getPageSize());
         Integer userId = null;
         HttpSession session = request.getSession(false);
         if (session != null) {
@@ -80,7 +82,6 @@ public class BookController {
         }
         // 调用 service 层方法获取数据
         PageResult<BookInfo> pageResult = bookService.getBookListByPage(pageRequest, userId);
-        log.info("获取首页图书列表成功，详细信息如下：{}", pageResult);
         return Result.success(pageResult);
     }
 
@@ -90,7 +91,6 @@ public class BookController {
         PageRequest pageRequest = new PageRequest();
         pageRequest.setCurrentPage(Integer.MAX_VALUE);
         pageRequest.setPageSize(10);
-        log.info("获取最后一页图书列表，当前页：{}, 每页记录数：{}", pageRequest.getCurrentPage(), pageRequest.getPageSize());
         Integer userId = null;
         HttpSession session = request.getSession(false);
         if (session != null) {
@@ -101,7 +101,6 @@ public class BookController {
         }
         // 调用 service 层方法获取数据
         PageResult<BookInfo> pageResult = bookService.getBookListByPage(pageRequest, userId);
-        log.info("获取最后一页图书列表成功，详细信息如下：{}", pageResult);
         return Result.success(pageResult);
     }
 
@@ -115,6 +114,8 @@ public class BookController {
         boolean success = bookService.addBook(bookInfo);
         if (success) {
             log.info("添加图书成功");
+            // 广播新增图书事件（客户端可更新本地缓存）
+            sseService.sendEvent("bookAdded", bookInfo);
             return Result.success("添加图书成功");
         } else {
             log.error("添加图书失败");
@@ -124,7 +125,7 @@ public class BookController {
 
     // 借阅图书
     @RequestMapping("/borrowBook")
-    public Result<String> borrowBook(@RequestBody Integer bookId, HttpServletRequest request) {
+    public Result<BookInfo> borrowBook(@RequestBody Integer bookId, HttpServletRequest request) {
         HttpSession session = request.getSession(false);
         if (session == null) {
             return Result.fail("用户未登录");
@@ -137,7 +138,10 @@ public class BookController {
         BookStatus status = bookService.borrowBook(userInfo.getId(), bookId);
         if (status == BookStatus.NORMAL) {
             log.info("借阅图书成功");
-            return Result.success("借阅图书成功");
+            BookInfo updated = bookInfoMapper.queryBookById(bookId);
+            sseService.sendEvent("bookBorrowed", updated);
+            // ensure cache updated in service already, but return authoritative BookInfo
+            return Result.success(updated);
         } else {
             if (status == BookStatus.FORBIDDEN) {
                 log.error("借阅图书失败，图书已被借出");
@@ -157,7 +161,7 @@ public class BookController {
 
     // 归还图书
     @RequestMapping("/returnBook")
-    public Result<String> returnBook(@RequestBody Integer bookId, HttpServletRequest request) {
+    public Result<BookInfo> returnBook(@RequestBody Integer bookId, HttpServletRequest request) {
         HttpSession session = request.getSession(false);
         if (session == null) {
             return Result.fail("用户未登录");
@@ -170,11 +174,19 @@ public class BookController {
         boolean success = bookService.returnBook(userInfo.getId(), bookId);
         if (success) {
             log.info("归还图书成功");
-            return Result.success("归还图书成功");
+            BookInfo updated = bookInfoMapper.queryBookById(bookId);
+            sseService.sendEvent("bookReturned", updated);
+            return Result.success(updated);
         } else {
             log.error("归还图书失败");
             return Result.fail("归还图书失败");
         }
+    }
+
+    // SSE 订阅端点
+    @GetMapping("/subscribe")
+    public SseEmitter subscribeToBookUpdates() {
+        return sseService.createEmitter();
     }
 
     // 检测图书是否加载完毕

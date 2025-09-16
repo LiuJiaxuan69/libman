@@ -192,17 +192,39 @@
         const PAGE_SIZE = 8; // 每次加载数量
         const initialLoad = 24; // 首次加载数量
         let localBorrowStatus = {}; // 存储每本书是否被借阅，key: bookId, value: true/false
+        let processingBooks = {}; // 存储正在请求的书籍 id，防止重复点击或并发操作
+
+        // 本地存储已借书籍集合，跨页面保持“我借阅”的本地判断
+        const LOCAL_BORROW_KEY = 'borrowed_books';
+        function loadBorrowedSet() {
+            try {
+                const arr = JSON.parse(localStorage.getItem(LOCAL_BORROW_KEY) || '[]');
+                return new Set(arr.map(x => Number(x)));
+            } catch (e) { return new Set(); }
+        }
+        let borrowedLocalSet = loadBorrowedSet();
+        function persistBorrowedSet() {
+            try { localStorage.setItem(LOCAL_BORROW_KEY, JSON.stringify(Array.from(borrowedLocalSet))); } catch (e) {}
+        }
+        function addBorrowedId(id) { borrowedLocalSet.add(Number(id)); persistBorrowedSet(); }
+        function removeBorrowedId(id) { borrowedLocalSet.delete(Number(id)); persistBorrowedSet(); }
         let loading = false; // 加载锁，防止重复加载
         let Offset = 0; // 偏移量
         function loadBooks(Count) {
 
+            console.time('books.list.fetch');
             return fetch('/book/getListByOffset', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ offset: Offset, count: Count })
             })
-                .then(resp => resp.json())
+                .then(resp => {
+                    console.timeEnd('books.list.fetch');
+                    console.time('books.list.parse');
+                    return resp.json();
+                })
                 .then(result => {
+                    console.timeEnd('books.list.parse');
                     if (result.status === 'SUCCESS') {
                         const books = result.data.records;
                         // 更新本地借阅状态缓存
@@ -213,8 +235,10 @@
                             }
                         });
 
+                        console.time('books.render.cards');
                         // 渲染书籍卡片
                         renderBookCards(books);
+                        console.timeEnd('books.render.cards');
                         if (books.length < PAGE_SIZE) {
                             console.log('已加载完所有书籍');
                         }
@@ -298,7 +322,11 @@
 
         // 获取操作按钮
         function getActionButton(book) {
-            if (book.isBorrowedByMe) {
+            if (processingBooks[book.id]) {
+                return `<button class="action-btn action-disabled" disabled>处理中...</button>`;
+            }
+            const isMyBorrow = borrowedLocalSet.has(Number(book.id));
+            if (isMyBorrow) {
                 return `<button class="action-btn action-return" onclick="returnBook(${book.id})">归还</button>`;
             } else if (book.isBorrowed) {
                 return `<button class="action-btn action-disabled" disabled>已借阅</button>`;
@@ -361,6 +389,12 @@
         });
 
         function borrowBook(bookId) {
+            if (processingBooks[bookId]) return; // already processing
+            processingBooks[bookId] = true;
+            // disable button UI
+            const cardBtn = document.querySelector(`.book-card[data-book-id='${bookId}'] .card-actions button`);
+            if (cardBtn) { cardBtn.disabled = true; cardBtn.classList.add('action-disabled'); cardBtn.textContent = '处理中...'; }
+
             fetch('/book/borrowBook', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -369,16 +403,33 @@
                 .then(resp => resp.json())
                 .then(result => {
                     if (result.status === 'SUCCESS') {
+                        // authoritative book info returned
+                        const book = result.data;
                         localBorrowStatus[bookId] = true;
-                        updateBookCard(bookId);
+                        addBorrowedId(bookId);
                         showToast("借阅成功");
+                        // start cooldown (3s) after DB update
+                        startCooldown(bookId, 3);
                     } else {
+                        // restore button
+                        processingBooks[bookId] = false;
+                        if (cardBtn) { cardBtn.disabled = false; cardBtn.classList.remove('action-disabled'); cardBtn.textContent = '借阅'; }
                         showToast("借阅失败：" + result.errorMessage);
                     }
+                })
+                .catch(err => {
+                    processingBooks[bookId] = false;
+                    if (cardBtn) { cardBtn.disabled = false; cardBtn.classList.remove('action-disabled'); cardBtn.textContent = '借阅'; }
+                    showToast('网络或接口异常');
                 });
         }
 
         function returnBook(bookId) {
+            if (processingBooks[bookId]) return; // already processing
+            processingBooks[bookId] = true;
+            const cardBtn = document.querySelector(`.book-card[data-book-id='${bookId}'] .card-actions button`);
+            if (cardBtn) { cardBtn.disabled = true; cardBtn.classList.add('action-disabled'); cardBtn.textContent = '处理中...'; }
+
             fetch('/book/returnBook', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -387,12 +438,22 @@
                 .then(resp => resp.json())
                 .then(result => {
                     if (result.status === 'SUCCESS') {
+                        const book = result.data;
                         localBorrowStatus[bookId] = false;
-                        updateBookCard(bookId);
+                        removeBorrowedId(bookId);
                         showToast("归还成功");
+                        // start cooldown (3s) after DB update
+                        startCooldown(bookId, 3);
                     } else {
+                        processingBooks[bookId] = false;
+                        if (cardBtn) { cardBtn.disabled = false; cardBtn.classList.remove('action-disabled'); cardBtn.textContent = '归还'; }
                         showToast("归还失败：" + result.errorMessage);
                     }
+                })
+                .catch(err => {
+                    processingBooks[bookId] = false;
+                    if (cardBtn) { cardBtn.disabled = false; cardBtn.classList.remove('action-disabled'); cardBtn.textContent = '归还'; }
+                    showToast('网络或接口异常');
                 });
         }
 
@@ -405,15 +466,50 @@
 
             const isBorrowed = localBorrowStatus[bookId];
 
-            if (isBorrowed) { // 已借出
-                btnDiv.innerHTML = `<button class="action-btn action-return" onclick="returnBook(${bookId})">归还</button>`;
+            if (processingBooks[bookId]) {
+                btnDiv.innerHTML = `<button class="action-btn action-disabled" disabled>处理中...</button>`;
+            } else if (isBorrowed) { // 已借出
+                // if under cooldown, show countdown
+                if (card.dataset.cooldown && Number(card.dataset.cooldown) > 0) {
+                    btnDiv.innerHTML = `<button class="action-btn action-disabled" disabled>${card.dataset.cooldown}</button>`;
+                } else {
+                    btnDiv.innerHTML = `<button class="action-btn action-return" onclick="returnBook(${bookId})">归还</button>`;
+                }
                 statusDiv.textContent = '已借出';
                 statusDiv.className = 'status status-forbidden';
             } else { // 可借阅
-                btnDiv.innerHTML = `<button class="action-btn action-borrow" onclick="borrowBook(${bookId})">借阅</button>`;
+                if (card.dataset.cooldown && Number(card.dataset.cooldown) > 0) {
+                    btnDiv.innerHTML = `<button class="action-btn action-disabled" disabled>${card.dataset.cooldown}</button>`;
+                } else {
+                    btnDiv.innerHTML = `<button class="action-btn action-borrow" onclick="borrowBook(${bookId})">借阅</button>`;
+                }
                 statusDiv.textContent = '可借阅';
                 statusDiv.className = 'status status-normal';
             }
+        }
+
+        // cooldown seconds display per card, set dataset.cooldown and update every second
+        function startCooldown(bookId, seconds) {
+            const card = document.querySelector(`.book-card[data-book-id='${bookId}']`);
+            if (!card) { processingBooks[bookId] = false; return; }
+            card.dataset.cooldown = seconds;
+            const btnDiv = card.querySelector('.card-actions');
+            const statusDiv = card.querySelector('.status');
+            // initial render
+            updateBookCard(bookId);
+            const interval = setInterval(() => {
+                let s = Number(card.dataset.cooldown) - 1;
+                if (s <= 0) {
+                    delete card.dataset.cooldown;
+                    clearInterval(interval);
+                    processingBooks[bookId] = false;
+                    updateBookCard(bookId);
+                } else {
+                    card.dataset.cooldown = s;
+                    // update button text
+                    if (btnDiv) btnDiv.innerHTML = `<button class="action-btn action-disabled" disabled>${s}</button>`;
+                }
+            }, 1000);
         }
 
 

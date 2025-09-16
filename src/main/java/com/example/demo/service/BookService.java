@@ -296,6 +296,7 @@ public class BookService {
     }
 
     // 归还图书
+    @Transactional
     public boolean returnBook(Integer userId, Integer bookId) {
         // 检查借阅记录是否存在
         BorrowInfo borrowInfo = borrowInfoMapper.queryBorrowInfoByUserIdAndBookId(bookId, userId);
@@ -303,12 +304,15 @@ public class BookService {
             return false; // 借阅记录不存在
         }
 
+        // 删除借阅记录（先删除以保证后续更新不会留下孤立记录）
+        int deleted = borrowInfoMapper.deleteBorrowInfo(borrowInfo.getBookId(), borrowInfo.getUserId());
+        if (deleted < 0) {
+            throw new RuntimeException("Failed to delete borrow record");
+        }
+
         // 更新图书状态为可借阅
         bookInfoMapper.updateBookStatusById(bookId, BookStatus.NORMAL.getCode());
 
-        // 删除借阅记录
-        if (borrowInfoMapper.deleteBorrowInfo(borrowInfo.getBookId(), borrowInfo.getUserId()) < 0)
-            return false;
         BookInfo bookInfo = bookInfoMapper.queryBookById(bookId);
         // 保险起见，再次确认图书状态
         bookInfo.setStatus(BookStatus.NORMAL.getCode());
