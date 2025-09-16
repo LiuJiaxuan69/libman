@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org">
+<head>
+    <meta charset="UTF-8">
+    <title>个人资料</title>
+    <link rel="stylesheet" href="/css/navbar.css" />
+</head>
+<body>
+    <div th:replace="navbar :: nav"></div>
+    <div id="toast-container" style="position: fixed; top: 20px; right: 20px; z-index: 9999;"></div>
+
+    <style>
+        /* reuse layout similar to index.html */
+        body { margin: 0; font-family: Arial, sans-serif; height: 100vh; display: flex; flex-direction: column; }
+        .container { flex: 1; display: flex; justify-content: center; align-items: flex-start; background: #f5f5f5; padding-top: 24px; height: calc(100vh - 56px); }
+        .profile-card { width: 60%; max-width: 900px; background: #fff; border-radius: 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.1); padding: 24px; box-sizing: border-box; }
+        .form-row { margin-bottom: 18px; display: flex; align-items: center; }
+        .form-row label { width: 120px; font-weight: bold; }
+        .form-row .field { flex: 1; }
+        .form-row input[type="text"], .form-row input[type="password"], .form-row input[type="file"] { width: 100%; padding: 8px; box-sizing: border-box; border: 1px solid #ddd; border-radius: 6px; }
+        .btn { padding: 8px 14px; border: none; border-radius: 6px; cursor: pointer; font-size: 0.95em; }
+        .btn-primary { background: #0984e3; color: #fff; }
+        .btn-danger { background: #d63031; color: #fff; }
+        .avatar-preview { width: 96px; height: 96px; border-radius: 8px; object-fit: cover; border: 1px solid #eee; }
+        .msg { color: #e74c3c; margin-top: 6px; }
+    </style>
+
+    <div class="container">
+        <div class="profile-card">
+            <h2>个人资料</h2>
+
+            <section>
+                <div class="form-row">
+                    <label>用户昵称</label>
+                    <div class="field">
+                        <input id="nickNameInput" type="text" placeholder="新的昵称" th:value="${session.session_user_key != null ? session.session_user_key.userName : ''}" />
+                    </div>
+                    <div style="margin-left:12px;"><button id="nickSaveBtn" class="btn btn-primary">保存</button></div>
+                </div>
+                <div id="nickMsg" class="msg"></div>
+            </section>
+
+            <section style="margin-top:12px;">
+                <div class="form-row">
+                    <label>当前头像</label>
+                    <div class="field">
+                        <img id="currentAvatar" th:if="${session.session_user_key != null}" th:src="@{/avatars/{file}(file=${session.session_user_key.avatar})}" alt="avatar" class="avatar-preview" />
+                        <img id="currentAvatar" th:unless="${session.session_user_key != null}" th:src="@{/avatars/default.jpg}" alt="avatar" class="avatar-preview" />
+                    </div>
+                </div>
+
+                <div class="form-row">
+                    <label>上传新头像</label>
+                    <div class="field">
+                        <input id="avatarInput" type="file" accept="image/png,image/jpeg" />
+                    </div>
+                    <div style="margin-left:12px;"><button id="avatarSaveBtn" class="btn btn-primary">上传</button></div>
+                </div>
+                <div id="avatarMsg" class="msg"></div>
+            </section>
+
+            <section style="margin-top:12px;">
+                <div class="form-row">
+                    <label>旧密码</label>
+                    <div class="field"><input id="oldPwd" type="password" placeholder="旧密码" /></div>
+                </div>
+                <div class="form-row">
+                    <label>新密码</label>
+                    <div class="field"><input id="newPwd" type="password" placeholder="新密码" /></div>
+                </div>
+                <div class="form-row">
+                    <label>确认密码</label>
+                    <div class="field"><input id="confirmPwd" type="password" placeholder="确认新密码" /></div>
+                    <div style="margin-left:12px;"><button id="pwdSaveBtn" class="btn btn-primary">修改密码</button></div>
+                </div>
+                <div id="pwdMsg" class="msg"></div>
+            </section>
+        </div>
+    </div>
+
+    <script src="/js/profile.js"></script>
+    <script src="/js/navbar.js"></script>
+</body>
+</html>

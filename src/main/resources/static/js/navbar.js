@@ -7,6 +7,11 @@ function fetchUserInfo() {
                 document.getElementById('userName').textContent = result.data.userName;
                 document.getElementById('loginLink').textContent = '退出登录';
                 document.getElementById('loginLink').href = '/view/login';
+                // update avatar if provided (add timestamp to avoid cache)
+                if (result.data.avatar) {
+                    const nav = document.getElementById('navAvatar');
+                    if (nav) nav.src = `/avatars/${result.data.avatar}?t=${Date.now()}`;
+                }
             } else {
                 document.getElementById('userName').textContent = '未登录';
                 document.getElementById('loginLink').textContent = '登录';

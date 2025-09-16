@@ -11,4 +11,5 @@ public class UserInfo {
     private Byte deleteFlag;
     private Date createTime;
     private Date updateTime;
+    private String avatar;
 }

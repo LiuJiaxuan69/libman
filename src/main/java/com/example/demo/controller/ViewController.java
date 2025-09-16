@@ -32,4 +32,9 @@ public class ViewController {
     public String categories() {
         return "categories";
     }
+
+    @GetMapping("profile")
+    public String profile() {
+        return "profile";
+    }
 }
