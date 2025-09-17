@@ -68,10 +68,13 @@ public class BookController {
     }
     // 获取首页分页信息
     @RequestMapping("/getIndexPage")
-    public Result<PageResult<BookInfo>> getIndexPage(HttpServletRequest request) {
+    public Result<PageResult<BookInfo>> getIndexPage(HttpServletRequest request, Integer pageSize) {
+         if (pageSize == null || pageSize <= 0 || pageSize > 50) {
+             pageSize = 10;
+         }
         PageRequest pageRequest = new PageRequest();
         pageRequest.setCurrentPage(1);
-        pageRequest.setPageSize(10);
+        pageRequest.setPageSize(pageSize);
         Integer userId = null;
         HttpSession session = request.getSession(false);
         if (session != null) {
@@ -87,10 +90,13 @@ public class BookController {
 
     // 获取最后一页分页信息
     @RequestMapping("/getLastPage")
-    public Result<PageResult<BookInfo>> getLastPage(HttpServletRequest request) {
+    public Result<PageResult<BookInfo>> getLastPage(HttpServletRequest request, Integer pageSize) {
+         if (pageSize == null || pageSize <= 0 || pageSize > 50) {
+             pageSize = 10;
+         }
         PageRequest pageRequest = new PageRequest();
         pageRequest.setCurrentPage(Integer.MAX_VALUE);
-        pageRequest.setPageSize(10);
+        pageRequest.setPageSize(pageSize);
         Integer userId = null;
         HttpSession session = request.getSession(false);
         if (session != null) {

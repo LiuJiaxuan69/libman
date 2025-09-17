@@ -59,7 +59,6 @@
 - GET `/view/categories` → `categories`
 - GET `/view/profile` → `profile`
 
-
 ### BookController (/book)
 
 - POST `/book/getListByOffset` — 偏移分页
@@ -70,9 +69,13 @@
   - 请求 JSON: `PageRequest`（示例 `{ "currentPage":1, "pageSize":10 }`）
   - 返回：`Result<PageResult<BookInfo>>`
 
-- POST `/book/getIndexPage` — 首页分页（默认第一页、pageSize=10）
+- POST `/book/getIndexPage` — 首页分页（默认第一页）
+  - 请求 JSON: `PageRequest`（示例 `{ "currentPage":1, "pageSize":10 }`）
+  - 返回：`Result<PageResult<BookInfo>>`
 
 - POST `/book/getLastPage` — 获取最后一页
+  - 请求 JSON: `PageRequest`（示例 `{ "currentPage":2147483647, "pageSize":10 }`）
+  - 返回：`Result<PageResult<BookInfo>>`
 
 - POST `/book/addBook` — 添加图书（需登录）
   - 请求 JSON: `BookInfo`（后端会写入 `donorId`）
@@ -97,12 +100,10 @@
   - 请求 JSON 示例：`{ "categoryIds": [1,2], "mode": 1 }`
   - 注意：控制器以 `String body` 接收原始 JSON 字符串，直接发送对象即可
 
-
 ### CategoryController (/category)
 
 - GET `/category/list` — 获取所有分类
   - 返回：`Result<List<BookCategory>>`
-
 
 ---
 
@@ -111,6 +112,7 @@
 下面给出 `src/main/java/com/example/demo/common` 中常用类型的字段说明及 JSON 传递示例，供前端和后端对齐使用格式。
 
 1) `Result<T>`
+
 - Java 字段：
   - `status` (`ResultStatus`)：响应状态（`SUCCESS` / `UNLOGIN` / `FAIL`），通常序列化为字符串。
   - `errorMessage`：失败时的错误描述字符串。
@@ -129,10 +131,10 @@
 }
 ```
 
-2) `ResultStatus`（枚举）
+1) `ResultStatus`（枚举）
 - 值与含义：`SUCCESS`(200)、`UNLOGIN`(-1)、`FAIL`(-2)。前端可直接匹配字符串值。
 
-3) `PageRequest`（分页请求）
+1) `PageRequest`（分页请求）
 - 字段：`currentPage` (int, default 1), `pageSize` (int, default 8)
 
 示例请求：
@@ -208,7 +210,3 @@
 ---
 
 如果你希望我把 `model` 下的实体（如 `BookInfo`、`UserInfo`）字段也自动列出来并追加到 README，或把整个 API 转成 OpenAPI/Swagger YAML，我可以继续完成（请选择下一步）。
-
-## 第二部分：`common` 类型字段说明与 JSON 示例
-
-代码中注释写的很详细(≧▽≦)！
