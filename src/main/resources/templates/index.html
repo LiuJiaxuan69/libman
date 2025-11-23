@@ -86,9 +86,35 @@
             color: #636e72;
         }
 
+        .book-desc {
+            margin-top: 8px;
+            line-height: 1.4;
+            color: #2d3436;
+            display: -webkit-box;
+            -webkit-line-clamp: 4; /* 最多展示4行，超出裁剪 */
+            -webkit-box-orient: vertical;
+            overflow: hidden;
+        }
+
         .book-card.expanded .card-details {
             display: block;
         }
+
+        .book-cover-wrapper {
+            margin-top: 10px;
+            display: flex;
+            align-items: flex-start;
+            gap: 16px;
+        }
+        .book-cover-wrapper img {
+            max-width: 140px;
+            max-height: 200px;
+            border-radius: 8px;
+            object-fit: cover;
+            box-shadow: 0 2px 6px rgba(0,0,0,0.15);
+        }
+        .cover-loading { color:#888; font-size:0.85em; }
+        .cover-error { color:#d63031; font-size:0.85em; }
 
         .action-btn {
             padding: 5px 12px;
@@ -286,15 +312,26 @@
                     <p>作者: ${book.author}</p>
                     <p>出版社: ${book.publish}</p>
                     <p>定价: ${book.price} 元</p>
+                    <p class="book-desc">简介: ${book.description ? book.description : '暂无简介'}</p>
                     <div class="card-actions">${getActionButton(book)}</div>
+                        <div class="book-cover-wrapper" data-cover-loaded="false">
+                            <div class="cover-status cover-loading">点击卡片展开后自动加载封面...</div>
+                        </div>
                 </div>
             `;
 
                 // 点击展开/收起详细信息
-                card.addEventListener('click', (e) => {
+                card.addEventListener('click', async (e) => {
                     // 防止点击按钮触发卡片展开
-                    if (!e.target.classList.contains('action-btn')) {
-                        card.classList.toggle('expanded');
+                    if (e.target.classList.contains('action-btn')) return;
+                    const willExpand = !card.classList.contains('expanded');
+                    card.classList.toggle('expanded');
+                    if (willExpand) {
+                        // 懒加载封面
+                        const wrap = card.querySelector('.book-cover-wrapper');
+                        if (wrap && wrap.dataset.coverLoaded === 'false') {
+                            await loadCoverForCard(book.id, wrap);
+                        }
                     }
                 });
 
@@ -510,6 +547,43 @@
                     if (btnDiv) btnDiv.innerHTML = `<button class="action-btn action-disabled" disabled>${s}</button>`;
                 }
             }, 1000);
+        }
+
+        async function loadCoverForCard(bookId, wrapper) {
+            if (!wrapper) return;
+            wrapper.dataset.coverLoaded = 'loading';
+            const statusDiv = wrapper.querySelector('.cover-status');
+            if (statusDiv) statusDiv.textContent = '加载封面中...';
+            try {
+                const resp = await fetch(`/book/${bookId}/cover`);
+                const result = await resp.json();
+                if (result.status === 'SUCCESS') {
+                    let url = result.data || '';
+                    if (!url || url === 'default.png') {
+                        // 默认封面使用占位图（需要在 /covers/default.png 放置）
+                        url = '/covers/default.png';
+                    } else {
+                        // 如果不是绝对路径，补齐 /covers/ 前缀
+                        if (!/^https?:\/\//.test(url) && !url.startsWith('/covers/')) {
+                            url = '/covers/' + url;
+                        }
+                    }
+                    wrapper.innerHTML = `<img src="${url}" alt="封面" onerror="this.src='/covers/default.png'">`;
+                    wrapper.dataset.coverLoaded = 'true';
+                } else {
+                    if (statusDiv) {
+                        statusDiv.className = 'cover-status cover-error';
+                        statusDiv.textContent = '封面加载失败';
+                    }
+                    wrapper.dataset.coverLoaded = 'fail';
+                }
+            } catch (e) {
+                if (statusDiv) {
+                    statusDiv.className = 'cover-status cover-error';
+                    statusDiv.textContent = '封面请求异常';
+                }
+                wrapper.dataset.coverLoaded = 'fail';
+            }
         }
 
 

@@ -44,6 +44,9 @@ dependencies {
     implementation 'org.springframework.boot:spring-boot-starter-data-redis'
     implementation 'org.springframework.boot:spring-boot-starter-cache'
 	implementation 'com.fasterxml.jackson.core:jackson-databind'
+	// LangChain4j (Java) for AI assistant (OpenAI-compatible provider)
+	implementation 'dev.langchain4j:langchain4j:0.34.0'
+	implementation 'dev.langchain4j:langchain4j-open-ai:0.34.0'
 }
 
 tasks.named('test') {

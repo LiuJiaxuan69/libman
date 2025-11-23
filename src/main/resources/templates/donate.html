@@ -108,6 +108,10 @@
                 <input type="text" id="publish" name="publish" required maxlength="40" placeholder="请输入出版社">
             </div>
             <div>
+                <label for="coverFile">封面图片 (<=5MB, 支持 jpg/png/webp)</label>
+                <input type="file" id="coverFile" accept="image/png,image/jpeg,image/webp">
+            </div>
+            <div>
                 <label>分类 (可多选)</label>
                 <div id="donate-categories" style="display:flex;flex-wrap:wrap;gap:8px;">
                     <!-- 分类复选将由 JS 填充 -->
@@ -149,35 +153,47 @@
         loadDonateCategories();
     </script>
     <script>
-        document.getElementById('donateForm').addEventListener('submit', function(e) {
+        document.getElementById('donateForm').addEventListener('submit', async function(e) {
             e.preventDefault();
-            const data = {
+            const msg = document.getElementById('msg');
+            msg.textContent = '';
+            const file = document.getElementById('coverFile').files[0];
+            if (file) {
+                const allowed = ['image/png','image/jpeg','image/webp'];
+                if (!allowed.includes(file.type)) {
+                    msg.textContent = '文件类型不支持';
+                    return;
+                }
+                if (file.size > 5 * 1024 * 1024) { // 5MB
+                    msg.textContent = '文件超过 5MB 限制';
+                    return;
+                }
+            }
+            const payload = {
                 bookName: document.getElementById('bookName').value.trim(),
                 author: document.getElementById('author').value.trim(),
                 price: document.getElementById('price').value,
                 publish: document.getElementById('publish').value.trim()
             };
-            // 收集选中的分类 ID，作为 JSON 字符串传给后端
             const selected = Array.from(document.querySelectorAll('#donate-categories input[type=checkbox]:checked')).map(ch => parseInt(ch.value, 10));
-            data.categoryIds = JSON.stringify(selected);
-            fetch('/book/addBook', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(data)
-            })
-            .then(resp => resp.json())
-            .then(result => {
-                const msg = document.getElementById('msg');
-                if(result.status === 'SUCCESS') {
-                    msg.textContent = '捐赠成功，感谢您的支持！';
+            payload.categoryIds = JSON.stringify(selected);
+            try {
+                const form = new FormData();
+                // 直接追加字符串，避免被视为文件 part 导致后端尝试将 MultipartFile 转换为 String
+                form.append('book', JSON.stringify(payload));
+                if (file) form.append('file', file);
+                const resp = await fetch('/book/addBookWithCover', { method: 'POST', body: form });
+                const res = await resp.json();
+                if (res.status === 'SUCCESS') {
+                    msg.textContent = '捐赠成功，封面已上传';
                     document.getElementById('donateForm').reset();
                 } else {
-                    msg.textContent = result.errorMessage || '捐赠失败，请重试';
+                    msg.textContent = res.errorMessage || '捐赠失败';
                 }
-            })
-            .catch(() => {
-                document.getElementById('msg').textContent = '网络异常，请稍后重试';
-            });
+            } catch (err) {
+                console.error(err);
+                msg.textContent = '网络异常，请稍后重试';
+            }
         });
     </script>
 </body>

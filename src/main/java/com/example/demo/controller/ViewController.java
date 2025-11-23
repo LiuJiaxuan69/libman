@@ -37,4 +37,14 @@ public class ViewController {
     public String profile() {
         return "profile";
     }
+
+    @GetMapping("ai")
+    public String ai() {
+        return "ai";
+    }
+
+    @GetMapping("manageBooks")
+    public String manageBooks() {
+        return "manage_books";
+    }
 }

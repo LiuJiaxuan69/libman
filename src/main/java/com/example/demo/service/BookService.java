@@ -72,13 +72,17 @@ public class BookService {
     }
 
     // 添加图书
-    // BookService.java
     public boolean addBook(BookInfo bookInfo) {
         // 如果传入的 bookInfo 没有 ID，就生成一个
         if (bookInfo.getId() == null) {
             String generatedId = TimeBase62UUIDGenerator.generate(); // 返回 String
             // 如果 BookInfo 的 id 是 Integer 类型，可以用 hashCode 或者自行修改类型为 String
             bookInfo.setId(generatedId.hashCode());
+        }
+
+        // 设置默认封面如果未提供
+        if (bookInfo.getCoverUrl() == null || bookInfo.getCoverUrl().isBlank()) {
+            bookInfo.setCoverUrl("default.png");
         }
 
         logger.info("Adding book: " + bookInfo);
@@ -106,7 +110,7 @@ public class BookService {
                             } catch (NumberFormatException ignore) {
                             }
                         }
-                    }
+                    }   
                 }
                 if (!cats.isEmpty()) {
                     final List<Integer> toAdd = cats;
@@ -146,16 +150,27 @@ public class BookService {
     /** 将BookInfo存入Redis Hash */
     private void saveBookToRedis(BookInfo book) {
         String hashKey = BOOK_INFO_KEY_PREFIX + book.getId();
-        Map<String, Object> map = new HashMap<>();
-        map.put("id", book.getId());
-        map.put("bookName", book.getBookName());
-        map.put("author", book.getAuthor());
-        map.put("publish", book.getPublish());
-        map.put("price", book.getPrice());
-        map.put("status", book.getStatus());
-        map.put("isBorrowedByMe", book.getIsBorrowedByMe());
+        // 使用统一转换，确保 description / categoryIds / categoryNames / tags 也写入缓存
+        Map<String, Object> map = BookInfoToMap(book);
         redisTemplate.opsForHash().putAll(hashKey, map);
         redisTemplate.expire(hashKey, BOOK_EXPIRE_MINUTES, TimeUnit.MINUTES);
+    }
+
+    /** 对外暴露：刷新单本书籍缓存（用于封面/部分字段更新后） */
+    public void refreshBookCache(Integer bookId) {
+        if (bookId == null) return;
+        BookInfo fresh = bookInfoMapper.queryBookById(bookId);
+        if (fresh == null) return;
+        // 填充分类名（如果未缓存）
+        fillCategoryNamesForBooks(java.util.List.of(fresh));
+        saveBookToRedis(fresh);
+    }
+
+    /** 权限判断：是否为该书的捐赠者 */
+    public boolean isOwner(Integer userId, Integer bookId) {
+        if (userId == null || bookId == null) return false;
+        BookInfo b = bookInfoMapper.queryBookById(bookId);
+        return b != null && b.getDonorId() != null && b.getDonorId().equals(userId);
     }
 
     /** Redis Hash → BookInfo */
@@ -171,6 +186,8 @@ public class BookService {
         book.setCategoryIds((String) map.get("categoryIds"));
         book.setCategoryNames((String) map.get("categoryNames"));
         book.setTags((String) map.get("tags"));
+        book.setCoverUrl((String) map.get("coverUrl"));
+        book.setDescription((String) map.get("description"));
         return book;
     }
 
@@ -187,6 +204,8 @@ public class BookService {
         map.put("categoryIds", book.getCategoryIds());
         map.put("categoryNames", book.getCategoryNames());
         map.put("tags", book.getTags());
+        map.put("coverUrl", book.getCoverUrl());
+        map.put("description", book.getDescription());
         return map;
     }
 
@@ -556,5 +575,210 @@ public class BookService {
         }
 
         return result;
+    }
+
+
+    // 更新书籍部分方法
+    /**
+     * Helper：把 categoryIds JSON 字符串解析为 Integer 列表（宽松解析）
+     */
+    private List<Integer> parseCategoryIds(String categoryIdsJson) {
+        List<Integer> cats = new ArrayList<>();
+        if (categoryIdsJson == null || categoryIdsJson.isBlank()) return cats;
+        try {
+            ObjectMapper mapper = new ObjectMapper();
+            cats = mapper.readValue(categoryIdsJson, new TypeReference<List<Integer>>() {});
+            return cats;
+        } catch (Exception ex) {
+            // fallback manual parse
+            String trimmed = categoryIdsJson.replaceAll("\\[|\\]", "").trim();
+            if (!trimmed.isEmpty()) {
+                String[] parts = trimmed.split(",");
+                for (String p : parts) {
+                    try { cats.add(Integer.parseInt(p.trim())); } catch (NumberFormatException ignore) {}
+                }
+            }
+            return cats;
+        }
+    }
+
+    /**
+     * 全量更新一本书（调用 mapper.updateBook），并同步更新 Redis 缓存与分类集合
+     */
+    @Transactional
+    public boolean updateBookFull(BookInfo bookInfo) {
+        if (bookInfo == null || bookInfo.getId() == null) return false;
+        Integer id = bookInfo.getId();
+
+        // 读取旧数据以便更新分类集合（和用于最终的缓存写入）
+        BookInfo old = bookInfoMapper.queryBookById(id);
+
+        int updated = bookInfoMapper.updateBook(bookInfo);
+        if (updated <= 0) return false;
+
+        // 读取最新记录并填充分类名
+        BookInfo fresh = bookInfoMapper.queryBookById(id);
+        if (fresh == null) return false;
+        fillCategoryNamesForBooks(List.of(fresh));
+
+        // 更新 Redis Hash
+        saveBookToRedis(fresh);
+
+        // 更新 category:books:<id> 集合（异步）
+        List<Integer> oldCats = old == null ? List.of() : parseCategoryIds(old.getCategoryIds());
+        List<Integer> newCats = parseCategoryIds(fresh.getCategoryIds());
+        final List<Integer> toRemove = oldCats.stream().filter(c -> !newCats.contains(c)).collect(Collectors.toList());
+        final List<Integer> toAdd = newCats.stream().filter(c -> !oldCats.contains(c)).collect(Collectors.toList());
+        if (!toRemove.isEmpty() || !toAdd.isEmpty()) {
+            CompletableFuture.runAsync(() -> {
+                redisTemplate.executePipelined(new SessionCallback<Object>() {
+                    @Override
+                    @SuppressWarnings({ "rawtypes", "unchecked" })
+                    public Object execute(RedisOperations operations) throws DataAccessException {
+                        for (Integer c : toRemove) {
+                            String key = "category:books:" + c;
+                            operations.opsForSet().remove(key, id);
+                        }
+                        for (Integer c : toAdd) {
+                            String key = "category:books:" + c;
+                            operations.opsForSet().add(key, id);
+                            operations.expire(key, 60, TimeUnit.MINUTES);
+                        }
+                        return null;
+                    }
+                });
+            });
+        }
+
+        return true;
+    }
+
+    /**
+     * PATCH 风格的选择性更新：只更新非 null 字段（调用 mapper.updateBookSelective）
+     */
+    @Transactional
+    public boolean updateBookSelective(BookInfo bookInfo) {
+        if (bookInfo == null || bookInfo.getId() == null) return false;
+        Integer id = bookInfo.getId();
+
+        // 读取旧数据以便处理分类变更
+        BookInfo old = bookInfoMapper.queryBookById(id);
+
+        int updated = bookInfoMapper.updateBookSelective(bookInfo);
+        if (updated <= 0) return false;
+
+        // 读取最新并填充
+        BookInfo fresh = bookInfoMapper.queryBookById(id);
+        if (fresh == null) return false;
+        fillCategoryNamesForBooks(List.of(fresh));
+
+        // 更新 Redis 缓存
+        saveBookToRedis(fresh);
+
+        // 若 categoryIds 在此次变更中被更新，则调整分类集合
+        String newCatJson = fresh.getCategoryIds();
+        String oldCatJson = old == null ? null : old.getCategoryIds();
+        if ((oldCatJson == null && newCatJson != null) || (oldCatJson != null && !oldCatJson.equals(newCatJson))) {
+            List<Integer> oldCats = old == null ? List.of() : parseCategoryIds(oldCatJson);
+            List<Integer> newCats = parseCategoryIds(newCatJson);
+            final List<Integer> toRemove = oldCats.stream().filter(c -> !newCats.contains(c)).collect(Collectors.toList());
+            final List<Integer> toAdd = newCats.stream().filter(c -> !oldCats.contains(c)).collect(Collectors.toList());
+            if (!toRemove.isEmpty() || !toAdd.isEmpty()) {
+                CompletableFuture.runAsync(() -> {
+                    redisTemplate.executePipelined(new SessionCallback<Object>() {
+                        @Override
+                        @SuppressWarnings({ "rawtypes", "unchecked" })
+                        public Object execute(RedisOperations operations) throws DataAccessException {
+                            for (Integer c : toRemove) {
+                                String key = "category:books:" + c;
+                                operations.opsForSet().remove(key, id);
+                            }
+                            for (Integer c : toAdd) {
+                                String key = "category:books:" + c;
+                                operations.opsForSet().add(key, id);
+                                operations.expire(key, 60, TimeUnit.MINUTES);
+                            }
+                            return null;
+                        }
+                    });
+                });
+            }
+        }
+
+        return true;
+    }
+
+    /**
+     * 单独更新 tags 字段
+     */
+    @Transactional
+    public boolean updateTags(Integer id, String tags) {
+        if (id == null) return false;
+        int updated = bookInfoMapper.updateTagsById(id, tags);
+        if (updated <= 0) return false;
+        BookInfo fresh = bookInfoMapper.queryBookById(id);
+        if (fresh != null) {
+            fillCategoryNamesForBooks(List.of(fresh));
+            saveBookToRedis(fresh);
+        }
+        return true;
+    }
+
+    /**
+     * 单独更新 description 字段
+     */
+    @Transactional
+    public boolean updateDescription(Integer id, String description) {
+        if (id == null) return false;
+        int updated = bookInfoMapper.updateDescriptionById(id, description);
+        if (updated <= 0) return false;
+        BookInfo fresh = bookInfoMapper.queryBookById(id);
+        if (fresh != null) {
+            fillCategoryNamesForBooks(List.of(fresh));
+            saveBookToRedis(fresh);
+        }
+        return true;
+    }
+
+    /**
+     * 单独更新 categoryIds（字符串 JSON），并同步调整 category:books 集合
+     */
+    @Transactional
+    public boolean updateCategoryIds(Integer id, String categoryIdsJson) {
+        if (id == null) return false;
+        // 读旧值
+        BookInfo old = bookInfoMapper.queryBookById(id);
+        int updated = bookInfoMapper.updateCategoryIdsById(id, categoryIdsJson);
+        if (updated <= 0) return false;
+        BookInfo fresh = bookInfoMapper.queryBookById(id);
+        if (fresh != null) {
+            fillCategoryNamesForBooks(List.of(fresh));
+            saveBookToRedis(fresh);
+        }
+        List<Integer> oldCats = old == null ? List.of() : parseCategoryIds(old.getCategoryIds());
+        List<Integer> newCats = parseCategoryIds(categoryIdsJson);
+        final List<Integer> toRemove = oldCats.stream().filter(c -> !newCats.contains(c)).collect(Collectors.toList());
+        final List<Integer> toAdd = newCats.stream().filter(c -> !oldCats.contains(c)).collect(Collectors.toList());
+        if (!toRemove.isEmpty() || !toAdd.isEmpty()) {
+            CompletableFuture.runAsync(() -> {
+                redisTemplate.executePipelined(new SessionCallback<Object>() {
+                    @Override
+                    @SuppressWarnings({ "rawtypes", "unchecked" })
+                    public Object execute(RedisOperations operations) throws DataAccessException {
+                        for (Integer c : toRemove) {
+                            String key = "category:books:" + c;
+                            operations.opsForSet().remove(key, id);
+                        }
+                        for (Integer c : toAdd) {
+                            String key = "category:books:" + c;
+                            operations.opsForSet().add(key, id);
+                            operations.expire(key, 60, TimeUnit.MINUTES);
+                        }
+                        return null;
+                    }
+                });
+            });
+        }
+        return true;
     }
 }

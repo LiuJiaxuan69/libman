@@ -1,0 +1,179 @@
+<!DOCTYPE html>
+<html lang="zh-CN" xmlns:th="http://www.thymeleaf.org">
+<head>
+    <meta charset="UTF-8"/>
+    <title>管理我的书籍</title>
+    <link rel="stylesheet" href="/css/navbar.css"/>
+    <style>
+        body { margin:0; font-family: Arial, sans-serif; background:#f5f6fa; }
+        .page-wrapper { padding-top:64px; max-width:1100px; margin:0 auto; }
+        h1 { font-weight:500; letter-spacing:1px; }
+        .books-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(320px,1fr)); gap:18px; }
+        .book-card { background:#fff; border-radius:16px; padding:20px; box-shadow:0 4px 12px rgba(0,0,0,0.07); display:flex; flex-direction:column; position:relative; }
+        .book-card header { font-size:1.05em; font-weight:600; margin-bottom:6px; display:flex; justify-content:space-between; align-items:center; }
+        .book-card small { color:#888; }
+        .book-card .cover-box { width:100%; text-align:center; margin:8px 0 16px; }
+        .book-card .cover-box img { max-width:140px; max-height:180px; object-fit:cover; border-radius:12px; box-shadow:0 2px 6px rgba(0,0,0,0.15); }
+        .field { display:flex; flex-direction:column; margin-bottom:10px; }
+        .field label { font-size:12px; font-weight:600; color:#555; margin-bottom:4px; }
+        .field input[type=text], .field input[type=number], .field textarea { border:1px solid #dcdde1; border-radius:8px; padding:8px 10px; font-size:13px; outline:none; transition:border-color .2s, box-shadow .2s; background:#fafafa; }
+        .field input:focus, .field textarea:focus { border-color:#4a90e2; box-shadow:0 0 0 3px rgba(74,144,226,.15); background:#fff; }
+        .actions { display:flex; gap:10px; flex-wrap:wrap; margin-top:8px; }
+        button { cursor:pointer; border:none; border-radius:24px; padding:8px 16px; font-size:13px; font-weight:600; letter-spacing:.5px; background:#4a90e2; color:#fff; box-shadow:0 2px 6px rgba(0,0,0,0.15); transition:background .2s, transform .15s; }
+        button:hover { background:#357ABD; }
+        button:active { transform:scale(.96); }
+        button.secondary { background:#00b894; }
+        button.secondary:hover { background:#019d78; }
+        button.outline { background:#fff; color:#4a90e2; border:1px solid #4a90e2; }
+        button.outline:hover { background:#4a90e2; color:#fff; }
+        .status { position:absolute; top:12px; right:16px; font-size:11px; padding:4px 8px; border-radius:20px; background:#eee; }
+        .status-normal { background:#dff9fb; color:#0984e3; }
+        .status-forbidden { background:#ffeaa7; color:#d35400; }
+        .status-deleted { background:#fab1a0; color:#d63031; }
+        .toast-container { position:fixed; top:70px; right:28px; display:flex; flex-direction:column; gap:10px; z-index:1000; }
+        .toast { background:rgba(0,0,0,0.8); color:#fff; padding:10px 16px; border-radius:8px; font-size:13px; opacity:0; transform:translateY(-10px); transition:.3s; }
+        .toast.show { opacity:1; transform:translateY(0); }
+        .cover-input { display:flex; align-items:center; gap:8px; }
+        .empty-hint { margin-top:30px; text-align:center; color:#888; }
+    </style>
+</head>
+<body>
+<div th:replace="navbar :: nav"></div>
+<div class="page-wrapper">
+    <h1>管理我的书籍</h1>
+    <div id="booksWrapper" class="books-grid"></div>
+    <div id="emptyHint" class="empty-hint" style="display:none;">目前还没有您捐赠的书籍。</div>
+</div>
+<div class="toast-container" id="toastContainer"></div>
+<script>
+function showToast(msg, ms=2200){const c=document.getElementById('toastContainer');const t=document.createElement('div');t.className='toast';t.textContent=msg;c.appendChild(t);setTimeout(()=>t.classList.add('show'),15);setTimeout(()=>{t.classList.remove('show');setTimeout(()=>c.removeChild(t),300)},ms);}
+
+function statusClass(code){switch(code){case 1:return 'status-normal';case 2:return 'status-forbidden';case 0:default:return 'status-deleted';}}
+function statusText(code){switch(code){case 1:return '可借阅';case 2:return '已借出';case 0:default:return '无效';}}
+
+async function loadMyBooks(){
+    const resp = await fetch('/book/my');
+    const res = await resp.json();
+    if(res.status!=='SUCCESS'){showToast(res.errorMessage||'加载失败');return;}
+    const list = res.data||[];
+    const wrap = document.getElementById('booksWrapper');
+    wrap.innerHTML='';
+    if(!list.length){document.getElementById('emptyHint').style.display='block';return;}
+    document.getElementById('emptyHint').style.display='none';
+    list.forEach(b=>wrap.appendChild(renderCard(b)));
+}
+
+function renderCard(book){
+    const card=document.createElement('div');card.className='book-card';card.dataset.id=book.id;
+    const stCls=statusClass(book.status);const stTxt=statusText(book.status);
+    card.innerHTML=`<header><span>${escapeHtml(book.bookName||'未命名')}</span></header>
+        <div class="status ${stCls}">${stTxt}</div>
+        <div class="cover-box">${renderCoverImg(book.coverUrl)}</div>
+        <div class="field"><label>书名</label><input type="text" name="bookName" value="${escapeAttr(book.bookName)}"></div>
+        <div class="field"><label>作者</label><input type="text" name="author" value="${escapeAttr(book.author)}"></div>
+        <div class="field"><label>出版社</label><input type="text" name="publish" value="${escapeAttr(book.publish)}"></div>
+        <div class="field"><label>价格</label><input type="number" step="0.01" name="price" value="${book.price||0}"></div>
+        <div class="field"><label>分类</label>
+            <div class="category-box" data-raw='${escapeAttr(book.categoryIds)}'></div>
+        </div>
+        <div class="field"><label>标签(JSON数组)</label><input type="text" name="tags" value="${escapeAttr(book.tags)}" placeholder='["科幻"]'></div>
+        <div class="field"><label>简介</label><textarea name="description" rows="3">${escapeHtml(book.description||'')}</textarea></div>
+        <div class="field cover-input"><label style="margin:0;">封面</label><input type="file" accept="image/png,image/jpeg,image/webp" name="coverFile"/></div>
+        <div class="actions">
+            <button class="save-full">保存全部</button>
+            <button class="save-patch outline">局部保存</button>
+            <button class="upload-cover secondary">更新封面</button>
+        </div>`;
+    attachHandlers(card, book.id);
+    return card;
+}
+
+function renderCoverImg(url){
+    if(!url) url='default.png';
+    if(!/^https?:/.test(url) && !url.startsWith('/covers/')) url='/covers/'+url;
+    return `<img src="${escapeAttr(url)}" alt="cover" onerror="this.src='/covers/default.png'">`;
+}
+
+function attachHandlers(card, id){
+    card.querySelector('.save-full').addEventListener('click',()=>saveFull(card,id));
+    card.querySelector('.save-patch').addEventListener('click',()=>savePatch(card,id));
+    card.querySelector('.upload-cover').addEventListener('click',()=>uploadCover(card,id));
+}
+
+function collectData(card){
+    const d={};
+    ['bookName','author','publish','price','tags','description'].forEach(f=>{
+        const el=card.querySelector(`[name='${f}']`); if(!el) return; let val=el.value.trim(); if(val==='') val=null; d[f]=val; });
+    // 分类多选
+    const checks=[...card.querySelectorAll('.category-box input[type=checkbox]:checked')];
+    const ids=checks.map(ch=>parseInt(ch.value,10)).filter(x=>!isNaN(x));
+    d.categoryIds = ids.length? JSON.stringify(ids): null;
+    return d;
+}
+
+async function saveFull(card,id){
+    const body=collectData(card);body.id=id;
+    const resp=await fetch(`/book/${id}`,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+    const res=await resp.json();
+    if(res.status==='SUCCESS'){showToast('更新成功');refreshCard(card,res.data);} else showToast(res.errorMessage||'失败');
+}
+
+async function savePatch(card,id){
+    const body=collectData(card);body.id=id; // id for patch service compatibility
+    const resp=await fetch(`/book/${id}`,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+    const res=await resp.json();
+    if(res.status==='SUCCESS'){showToast('部分更新成功');refreshCard(card,res.data);} else showToast(res.errorMessage||'失败');
+}
+
+async function uploadCover(card,id){
+    const fileInput=card.querySelector("[name='coverFile']");
+    const file=fileInput.files[0];
+    if(!file){showToast('请选择文件');return;}
+    if(file.size>5*1024*1024){showToast('文件过大');return;}
+    const fd=new FormData();fd.append('file',file);
+    const resp=await fetch(`/book/${id}/cover`,{method:'POST',body:fd});
+    const res=await resp.json();
+    if(res.status==='SUCCESS'){showToast('封面更新成功');card.querySelector('.cover-box').innerHTML=renderCoverImg(res.data);} else showToast(res.errorMessage||'封面失败');
+}
+
+function refreshCard(card,data){ if(!data) return; if(data.coverUrl){card.querySelector('.cover-box').innerHTML=renderCoverImg(data.coverUrl);} }
+
+function escapeHtml(str){return (str||'').replace(/[&<>"']/g,s=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;','\'':'&#39;'}[s]));}
+function escapeAttr(str){return escapeHtml(str);} // simple reuse
+
+let CATEGORIES_CACHE=[];
+async function loadCategories(){
+    try{
+        const r=await fetch('/category/list');
+        const j=await r.json();
+        if(j.status==='SUCCESS'){CATEGORIES_CACHE=j.data||[]} else showToast('分类加载失败');
+    }catch(e){showToast('分类请求异常');}
+}
+
+function renderCategories(box){
+    const raw=box.getAttribute('data-raw');
+    let selected=[];
+    if(raw){try{selected=JSON.parse(raw);}catch(e){}}
+    box.innerHTML=CATEGORIES_CACHE.map(c=>`<label style="margin-right:10px;display:inline-flex;align-items:center;gap:4px;font-size:12px;">
+        <input type="checkbox" value="${c.id}" ${selected.includes(c.id)?'checked':''}/> ${escapeHtml(c.categoryName)}
+    </label>`).join('');
+}
+
+async function initManage(){
+    await loadCategories();
+    await loadMyBooks();
+    // 渲染分类选择
+    document.querySelectorAll('.category-box').forEach(renderCategories);
+}
+
+// 覆盖原 loadMyBooks 以在渲染卡片后再绘制分类
+const _origLoadMyBooks = loadMyBooks;
+loadMyBooks = async function(){
+    await _origLoadMyBooks();
+    document.querySelectorAll('.category-box').forEach(renderCategories);
+};
+
+initManage();
+</script>
+</body>
+</html>

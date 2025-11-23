@@ -682,24 +682,67 @@
                 });
             } else {
                 // 加载选中分类的书籍，发送 mode 参数（1=交集,2=并集）
-                const mode = document.querySelector('input[name="catMode"]:checked').value;
-                // 尝试从本地缓存读取并合并多个分类（这里简单取并集）
-                const combined = [];
+                const mode = parseInt(document.querySelector('input[name="catMode"]:checked').value, 10);
+
+                // 从本地缓存按分类读取；仅当所有选中分类均有缓存时才使用本地数据，避免偏差
+                const lists = [];
+                let hasAllCaches = true;
                 selectedCategoryIds.forEach(cid => {
                     const arr = loadBooksByCategory(cid);
-                    if (Array.isArray(arr)) {
-                        arr.forEach(b => { if (!combined.find(x=>x.id===b.id)) combined.push(b); });
+                    if (Array.isArray(arr) && arr.length > 0) {
+                        lists.push(arr);
+                    } else {
+                        hasAllCaches = false;
                     }
                 });
-                if (combined.length > 0) {
-                    const books = combined.slice(Offset, Offset + Count);
-                    books.forEach(book => { if (!(book.id in localBorrowStatus)) localBorrowStatus[book.id] = book.isBorrowed; });
-                    renderBookCards(books);
-                    Offset += books.length;
-                    return Promise.resolve({ data: { records: books } });
+
+                if (hasAllCaches && lists.length > 0) {
+                    // 去重用的 map
+                    const byId = new Map();
+                    const toIdSet = (arr) => new Set(arr.map(b => {
+                        const id = String(b.id || b.bookId || b.bid || b.book_id);
+                        byId.set(id, b);
+                        return id;
+                    }));
+
+                    let resultIds;
+                    if (mode === 1) {
+                        // 交集：取所有列表共同包含的 id
+                        const idSets = lists.map(toIdSet);
+                        // 从最短的集合开始交
+                        idSets.sort((a, b) => a.size - b.size);
+                        resultIds = new Set(idSets[0]);
+                        for (let i = 1; i < idSets.length; i++) {
+                            const s = idSets[i];
+                            for (const id of Array.from(resultIds)) {
+                                if (!s.has(id)) resultIds.delete(id);
+                            }
+                            if (resultIds.size === 0) break;
+                        }
+                    } else {
+                        // 并集
+                        resultIds = new Set();
+                        lists.forEach(arr => {
+                            arr.forEach(b => {
+                                const id = String(b.id || b.bookId || b.bid || b.book_id);
+                                byId.set(id, b);
+                                resultIds.add(id);
+                            });
+                        });
+                    }
+
+                    const combined = Array.from(resultIds).map(id => byId.get(id));
+                    if (combined.length > 0) {
+                        const books = combined.slice(Offset, Offset + Count);
+                        books.forEach(book => { if (!(book.id in localBorrowStatus)) localBorrowStatus[book.id] = book.isBorrowed; });
+                        renderBookCards(books);
+                        Offset += books.length;
+                        return Promise.resolve({ data: { records: books } });
+                    }
+                    // 若交集为空，继续走远端以获取权威结果（可能有未缓存的数据）
                 }
 
-                // 本地没有则回退到远端
+                // 本地不可用或不足，则回退到远端
                 return fetch('/book/getBooksByCategoryIds', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
@@ -709,9 +752,24 @@
                 .then(result => {
                     if (result.status === 'SUCCESS') {
                         // write to local cache for each category
-                        const allBooks = result.data;
-                        // save per-category lists
-                        selectedCategoryIds.forEach(cid => saveBooksByCategory(cid, allBooks));
+                        const allBooks = result.data || [];
+                        // 将远端结果按书籍实际 categoryIds 归桶，仅对当前选中分类写入，避免把组合结果写进每个分类
+                        const bucket = new Map(); // cid (string) -> array of books
+                        const ensure = (cid) => { const key = String(cid); if (!bucket.has(key)) bucket.set(key, []); return bucket.get(key); };
+                        allBooks.forEach(book => {
+                            let cats = [];
+                            try { cats = JSON.parse(book.categoryIds || '[]'); } catch(_) { cats = []; }
+                            cats.forEach(c => {
+                                const key = String(c);
+                                if (selectedCategoryIds.has(key)) {
+                                    const arr = ensure(key);
+                                    if (!arr.find(b => String((b.id||b.bookId||b.bid||b.book_id)) === String(book.id||book.bookId||book.bid||book.book_id))) {
+                                        arr.push(book);
+                                    }
+                                }
+                            });
+                        });
+                        bucket.forEach((arr, cid) => saveBooksByCategory(cid, arr));
                         const books = allBooks.slice(Offset, Offset + Count);
                         books.forEach(book => { if (!(book.id in localBorrowStatus)) localBorrowStatus[book.id] = book.isBorrowed; });
                         renderBookCards(books);
