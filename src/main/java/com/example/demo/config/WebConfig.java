@@ -20,8 +20,7 @@ public class WebConfig implements WebMvcConfigurer {
         "/user/register",
         "/view/login",
         "/view/register",
-        "/view/ai",
-        "/ai/**"
+        "/view/ai"
     );
 
     @Override

@@ -15,14 +15,16 @@ import java.util.UUID;
 public class LibraryAiService {
 
     private final LibraryAssistant assistant;
+    private final com.example.demo.service.ChatContextService chatContextService;
 
-    public LibraryAiService(ChatLanguageModel chatLanguageModel, MapperTools mapperTools) {
+    public LibraryAiService(ChatLanguageModel chatLanguageModel, MapperTools mapperTools, com.example.demo.service.ChatContextService chatContextService) {
         ChatMemoryProvider memoryProvider = sessionId -> MessageWindowChatMemory.withMaxMessages(20);
         this.assistant = AiServices.builder(LibraryAssistant.class)
                 .chatLanguageModel(chatLanguageModel)
                 .tools(List.of(mapperTools))
                 .chatMemoryProvider(memoryProvider)
                 .build();
+        this.chatContextService = chatContextService;
     }
 
     public String ensureSessionId(String sessionId) {
@@ -32,10 +34,22 @@ public class LibraryAiService {
         return sessionId;
     }
 
-    public String chat(String sessionId, String message) {
+    public String chat(String sessionId, String message, Integer userId) {
         String sid = ensureSessionId(sessionId);
-        String full = assistant.chat(sid, message);
+        String effectiveMessage = prepareWithPreheat(userId, message);
+        String full = assistant.chat(sid, effectiveMessage);
         full = cleanReply(full, sid);
+        if (!isComplete(full)) {
+            // 追加补全提示，防止截断（二次调用）
+            String continuationPrompt = buildContinuationPrompt(full);
+            try {
+                String extra = assistant.chat(sid, continuationPrompt);
+                extra = cleanReply(extra, sid);
+                full = mergeContinuations(full, extra);
+            } catch (Exception e) {
+                // 忽略补全失败，返回原始文本
+            }
+        }
         return full;
     }
 
@@ -43,12 +57,23 @@ public class LibraryAiService {
                                     java.util.function.Consumer<String> sessionEventConsumer,
                                     java.util.function.Consumer<String> tokenConsumer,
                                     java.util.function.Consumer<String> completeConsumer,
-                                    java.util.function.Consumer<Throwable> errorConsumer) {
+                                    java.util.function.Consumer<Throwable> errorConsumer,
+                                    Integer userId) {
         String sid = ensureSessionId(sessionId);
         sessionEventConsumer.accept(sid);
-        // 同步生成完整回复
-        String generated = assistant.chat(sid, message);
-        final String full = cleanReply(generated, sid);
+        // 同步生成完整回复（先预热上下文）
+        String effectiveMessage = prepareWithPreheat(userId, message);
+        String generated = assistant.chat(sid, effectiveMessage);
+        String cleaned = cleanReply(generated, sid);
+        if (!isComplete(cleaned)) {
+            String continuationPrompt = buildContinuationPrompt(cleaned);
+            try {
+                String extra = assistant.chat(sid, continuationPrompt);
+                String extraClean = cleanReply(extra, sid);
+                cleaned = mergeContinuations(cleaned, extraClean);
+            } catch (Exception ignore) {}
+        }
+        final String full = cleaned;
         new Thread(() -> {
             try {
                 // 按 Unicode code point 逐字输出，过滤器可自定义修改字符
@@ -69,6 +94,34 @@ public class LibraryAiService {
                 errorConsumer.accept(e);
             }
         }, "ai-stream-" + sid).start();
+    }
+
+    // 从 ChatContextService 读取历史并生成一个不可见的前缀，用于模型预热（不应被模型逐字回放）
+    private String prepareWithPreheat(Integer userId, String message) {
+        if (userId == null) return message;
+        try {
+            String ctx = chatContextService.getContextJson(userId);
+            if (ctx == null || ctx.isBlank()) return message;
+            // 解析 JSON，提取最近若干条文本作为上下文预热（只取角色与内容）
+            com.fasterxml.jackson.databind.ObjectMapper om = new com.fasterxml.jackson.databind.ObjectMapper();
+            java.util.List<java.util.Map<String, Object>> msgs = om.readValue(ctx, new com.fasterxml.jackson.core.type.TypeReference<>() {});
+            StringBuilder sb = new StringBuilder();
+            sb.append("[历史上下文（仅供模型理解，请勿在回答中原样复述）]\n");
+            int taken = 0;
+            for (int i = Math.max(0, msgs.size() - 20); i < msgs.size(); i++) {
+                java.util.Map<String, Object> m = msgs.get(i);
+                Object role = m.getOrDefault("role", "");
+                Object content = m.getOrDefault("content", "");
+                sb.append("[").append(role).append("]:").append(content).append("\n");
+                taken++;
+                if (sb.length() > 2000) break; // 限制前缀长度
+            }
+            sb.append("--- 以上为预热上下文结束，请据此理解用户背景后继续回答。\n用户消息:\n");
+            sb.append(message == null ? "" : message);
+            return sb.toString();
+        } catch (Exception e) {
+            return message;
+        }
     }
 
     /**
@@ -134,5 +187,52 @@ public class LibraryAiService {
             System.out.println("[AI CLEAN] before='" + original + "' after='" + cleaned + "'");
         }
         return cleaned;
+    }
+
+    // 判断文本是否“完整”：末尾有句号/叹号/问号/中文句号，且无明显被截断的 Markdown 表格行
+    private boolean isComplete(String txt) {
+        if (txt == null || txt.isBlank()) return true; // 空视为完整，避免无限补全
+        String t = txt.trim();
+        if (t.length() < 40) return true; // 短文本不做补全
+        boolean endsWithPunct = t.endsWith("。") || t.endsWith("！") || t.endsWith("！") || t.endsWith("?") || t.endsWith("？") || t.endsWith(".");
+        // 检查最后一行是否是未闭合的表格行（包含 '|' 但没有换行终止标点且列数明显不足）
+        String[] lines = t.split("\n");
+        String lastLine = lines[lines.length - 1].trim();
+        boolean probableTableFragment = lastLine.contains("|") && lastLine.length() < 15 && !endsWithPunct;
+        return endsWithPunct && !probableTableFragment;
+    }
+
+    // 构造补全提示：要求继续并以总结句结束
+    private String buildContinuationPrompt(String current) {
+        String tail = excerptTail(current, 180);
+        return "请继续补完整上文被截断的内容，延续语义并给出一个简洁的总结句。不要重复已出现的句子。上文片段：" + tail;
+    }
+
+    private String excerptTail(String txt, int maxChars) {
+        if (txt == null) return "";
+        int len = txt.length();
+        if (len <= maxChars) return txt;
+        return txt.substring(len - maxChars);
+    }
+
+    // 合并主文本与补全文：避免重复，简单去重末尾开始处的重复段落
+    private String mergeContinuations(String base, String extra) {
+        if (extra == null || extra.isBlank()) return base;
+        String trimmedExtra = extra.trim();
+        if (trimmedExtra.isEmpty()) return base;
+        // 如果补全文已经被包含则直接返回
+        if (base.endsWith(trimmedExtra) || base.contains(trimmedExtra)) return base;
+        // 去除补全文中可能重复的开头（与 base 末尾重叠）
+        int overlap = findOverlap(base, trimmedExtra);
+        return overlap > 0 ? base + trimmedExtra.substring(overlap) : base + (base.endsWith("\n") ? "" : "\n") + trimmedExtra;
+    }
+
+    private int findOverlap(String base, String extra) {
+        int max = Math.min(base.length(), extra.length());
+        for (int i = max; i > 20; i--) { // 只检测较长的重叠，降低误判
+            String tail = base.substring(base.length() - i);
+            if (extra.startsWith(tail)) return i;
+        }
+        return 0;
     }
 }

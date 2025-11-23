@@ -377,6 +377,177 @@ AI 模块受配置开关控制：`application.properties` 中 `ai.enabled=true` 
 - DOMPurify 严格白名单渲染 Markdown，避免注入脚本。
 - 建议对 AI 回复中出现的 URL 做额外校验再自动链接化。
 
+### 8. 新增 AI 工具（面向模型的内部调用）
+
+后端通过 `MapperTools` 暴露一组可供模型调用的检索工具，使 AI 在回答与图书相关的问题时能够获取最新的库数据。模型遇到指令（如“帮我找一本关于生物的书”）时，内部将自动选择合适工具，而无需前端显式调用。
+
+当前可用工具（LangChain4j @Tool）：
+
+| 方法 | 功能 | 典型触发语句示例 |
+|------|------|------------------|
+| `listBooksByOffset(offset, limit)` | 按偏移分页获取书籍 | “列出最近添加的几本书” |
+| `countBooks()` | 获取总书籍数 | “图书馆共有多少书” |
+| `getBookById(id)` / `getBooksByIds(ids)` | 根据单个 / 多个 ID 获取 | “ID 123 的书详情” |
+| `listCategories()` | 获取所有分类 | “有哪些学科分类” |
+| `searchBooksByCategoryWithFallback(name, limit)` | 按分类（带同义回退）搜索 | “找一些文学相关的书” |
+| `searchBooksByTitle(title, limit)` | 按标题模糊搜索 | “有包含‘数学’的书吗” |
+| `recommendRandomBooks(limit)` | 随机推荐若干书 | “随便推荐几本” |
+| `searchBooksByAnyCategories(categoryNames, limit)` | 任意匹配多分类 | “给我一些历史或生物的书” |
+| `summarizeLibrary()` | 输出总数与分类覆盖统计 | “图书馆整体概况” |
+| `getBookDetailRich(id)` | 结构化书籍详细信息 | “详细介绍一下 ID 456 的书” |
+| `getUserByName(userName)` | 查询捐赠者信息 | “这本书的捐赠者是谁” |
+
+内部策略：
+
+1. 当分类未命中时 `searchBooksByCategoryWithFallback` 会回退同义分类（例如 “小说” → “文学”）。
+2. 标题搜索与分类搜索均在模型提示中加入列展示建议，模型会以 Markdown 表格形式输出（已在 continuation 补全逻辑中增强表格完整性）。
+3. 若初次回答被检测为不完整（缺少句号或表格断行），会自动二次补全并合并到最终输出。
+
+前端使用建议（可选增强）：
+
+- 若希望显式唤起特定工具，可在用户输入前加系统前缀，例如：“(TOOL:searchBooksByTitle) 数学”。模型将更倾向调用对应方法。
+- 过滤模型输出表格时，可检查列头是否与预期（书名/作者/出版社/价格/分类/状态/简介），不一致时可提示用户“请重述需求”。
+
+Prompt 编写示例片段（内部）：
+
+```text
+请在需要查找书籍时优先使用提供的检索工具。输出结果使用规范 Markdown 表格：
+|书名|作者|出版社|价格|分类|状态|内容简介|
+表格之后给出1-2句总结。若首次生成未完成，请继续补全。
+```
+
+
+---
+### 9. 外部网络搜索工具：Tavily
+
+提供一个供 AI 模型使用的外部网络搜索工具（封装 Tavily Web Search API），用于回答需要最新互联网信息的问题。模型通过内部 @Tool `tavilySearch(query, maxResults, depth)` 调用。
+
+环境配置：
+
+| 项 | 说明 |
+|----|------|
+| 环境变量 `TAVILY_API_KEY` | Tavily 的 API Key，优先使用 |
+| 属性 `tavily.api.key` | 可在 `application.properties` 中设置，作为备用 |
+| 属性 `tavily.search.depth` | 默认 `basic`，可选 `advanced` |
+| 属性 `tavily.max-results` | 默认返回前 5 条结果 |
+
+示例调用（模型内部）：
+
+```
+请搜索：2025 年 Java 最新 LTS 版本的新特性，列出要点并引用来源链接。
+```
+
+模型执行逻辑：
+1. 将用户请求作为 `query` 传给 Tavily。
+2. 自动注入当前系统日期（`LocalDate.now()`）用于时间敏感回答展示。
+3. 解析响应中的 `answer` 与 `results` 列表，截取内容摘要（约 160 字）。
+4. 将结果格式化输出：日期 / 原始查询 / Answer / Top Sources（标题 + URL + 摘要）。
+
+返回文本示例：
+
+```
+当前日期: 2025-11-23
+原始查询: 2025 年 Java 最新 LTS 版本的新特性
+搜索深度: basic 结果数量: 5
+Answer: Java 21 是最新 LTS，引入虚拟线程、结构化并发等。
+Top Sources:
+1. Virtual Threads in Java
+  https://example.com/virtual-threads
+  摘要: 虚拟线程显著降低并发复杂度……
+2. Structured Concurrency Overview
+  https://example.com/structured-concurrency
+  摘要: 结构化并发提供任务生命周期管理……
+...
+(数据来源：Tavily Web Search API)
+```
+
+错误与降级处理：
+- 未配置密钥：返回提示“未配置 Tavily API Key”。
+- HTTP 非 2xx：返回状态码与截断的响应体片段。
+- 解析异常：返回错误消息与截断原始 JSON 片段。
+
+使用建议：
+- 仅在需要“最新”或“广域”信息时调用（例如技术趋势、新闻、政策），避免浪费配额。
+- 问题可明确时间范围（例如“过去 6 个月”），模型仍会引用当前日期辅助回答。
+- 若需更深爬取，可在提示中加入“使用 advanced 深度”使模型传参 `depth=advanced`。
+
+安全注意事项：
+- Tavily 返回的 URL 未经白名单过滤，前端若要跳转请使用 rel="noopener noreferrer" 且可展示来源域名让用户自行决定。
+- 不要直接将搜索结果视为事实，答案段落仍建议附加“请进一步核对官方来源”。
+
+---
+### 10. 会话上下文存储（Redis + MySQL）
+
+目标：对每位已登录用户，记录与 AI 的双向对话上下文。上下文保存在 Redis（带 TTL），到期自动落库 MySQL；同时限制总长度，超限则保留最近消息。
+
+默认参数（可在 `application.properties` 调整）：
+- `app.chat.context.max-chars=16000`：单用户会话 JSON 最大字符数（超出裁剪最旧消息）。
+- `app.chat.redis.ttl-seconds=1800`：Redis 过期时间（秒），到期触发数据库落盘。
+- `app.chat.redis.key-prefix=chat:ctx:`：Redis Key 前缀。
+
+Redis 要求：开启 Keyspace 通知
+
+```
+CONFIG SET notify-keyspace-events Ex
+```
+
+MySQL 表结构（请先在数据库创建，已包含外键到 `user_info(id)`）：
+
+```sql
+CREATE TABLE `chat_history` (
+  `id` BIGINT NOT NULL AUTO_INCREMENT,
+  `user_id` INT NOT NULL,
+  `context_json` LONGTEXT NOT NULL,
+  `total_chars` INT NOT NULL,
+  `create_time` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `update_time` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uk_user` (`user_id`),
+  CONSTRAINT `fk_chat_history_user`
+    FOREIGN KEY (`user_id`) REFERENCES `user_info`(`id`)
+    ON DELETE CASCADE
+    ON UPDATE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+```
+
+如已创建无外键版本，可执行以下变更为带外键版本（若已有数据请先确认 `user_id` 全部合法）：
+
+```sql
+ALTER TABLE `chat_history`
+  ADD CONSTRAINT `fk_chat_history_user`
+  FOREIGN KEY (`user_id`) REFERENCES `user_info`(`id`)
+  ON DELETE CASCADE
+  ON UPDATE CASCADE;
+```
+
+说明：
+- 采用 `ON DELETE CASCADE`，当用户被删除时自动清理其历史上下文；如需禁止删除可改为 `ON DELETE RESTRICT`。
+- 字符集/排序规则与示例 `user_info` 一致（`utf8mb4_0900_ai_ci`）。
+
+后端实现要点：
+- 模型：`ChatHistory`；Mapper：`ChatHistoryMapper`（XML 见 `resources/mapper/ChatHistoryMapper.xml`）。
+- 服务：`ChatContextService`
+  - `appendMessage(userId, role, content)`: 读取 Redis → 追加消息 → 超限裁剪 → 写回 Redis（TTL 重置）。
+  - 内存留存最近快照 `lastSnapshot` 用于过期回写（防止 Redis 过期后读不到值）。
+  - `persistIfPresent(userId)`: 将最后快照 Upsert 到 MySQL。
+- 监听器：`RedisKeyExpirationConfig` 订阅过期事件，匹配前缀后调用 `persistIfPresent`。
+  - 需要 `RedisMessageListenerContainer` Bean（已提供）。
+
+API：
+- `POST /ai/context/append`：请求体 `{role:"user|assistant", content:"..."}`，需登录会话，保存到 Redis。
+- `GET /ai/context/get`：返回当前会话 JSON 字符串（Redis 优先，DB 回退）。
+
+工作流：
+1. 用户与 AI 对话时，前端在每轮调用后向 `/ai/context/append` 上报当前轮消息（user 与 assistant 各一次）。
+2. Redis 按 TTL 缓存上下文；过期时（Keyspace 事件）监听器将最近快照写入 MySQL。
+3. 下次进入会话时若 Redis 没值，将自动从 DB 载入历史作为起点。
+
+注意：
+- 由于 Redis 过期事件不包含 Key 的值，本实现使用“最近快照”策略；若应用重启、快照丢失，仍可依赖上次已落库记录保底。
+- 如需严格语义，可改为“写入时同步落库”，或引入定时任务在 TTL 前阈值主动落盘。
+
+---
+
 ---
 
 ## 第六部分：图书封面上传与懒加载接口补充

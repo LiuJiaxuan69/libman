@@ -8,6 +8,7 @@ import com.example.demo.model.BookCategory;
 import com.example.demo.model.UserInfo;
 import dev.langchain4j.agent.tool.Tool;
 import org.springframework.stereotype.Component;
+import org.springframework.beans.factory.annotation.Autowired;
 
 import java.util.List;
 import java.util.Map;
@@ -18,11 +19,14 @@ public class MapperTools {
     private final BookInfoMapper bookInfoMapper;
     private final BookCategoryMapper categoryMapper;
     private final UserInfoMapper userInfoMapper;
+    private final TavilyWebTool tavilyWebTool;
 
-    public MapperTools(BookInfoMapper bookInfoMapper, BookCategoryMapper categoryMapper, UserInfoMapper userInfoMapper) {
+    @Autowired
+    public MapperTools(BookInfoMapper bookInfoMapper, BookCategoryMapper categoryMapper, UserInfoMapper userInfoMapper, TavilyWebTool tavilyWebTool) {
         this.bookInfoMapper = bookInfoMapper;
         this.categoryMapper = categoryMapper;
         this.userInfoMapper = userInfoMapper;
+        this.tavilyWebTool = tavilyWebTool;
     }
 
     // 简单的类别同义 & 回退映射，可扩展
@@ -114,5 +118,138 @@ public class MapperTools {
     @Tool("根据用户名查找用户（用于查询捐赠者信息等）")
     public UserInfo getUserByName(String userName) {
         return userInfoMapper.queryUserByName(userName);
+    }
+
+    // ================= 新增 AI 工具方法 =================
+
+    @Tool("按标题或部分标题模糊搜索书籍，参数 title 为关键字，limit 为最大返回数")
+    public List<BookInfo> searchBooksByTitle(String title, int limit) {
+        if (title == null || title.isBlank()) return java.util.Collections.emptyList();
+        // 简单抓取一批再在内存中过滤（可替换为专用 SQL LIKE 查询）
+        List<BookInfo> batch = bookInfoMapper.queryBookListByPage(0, Math.max(limit, 200));
+        String t = title.trim().toLowerCase();
+        return batch.stream()
+                .filter(b -> {
+                    String name = b.getBookName();
+                    return name != null && name.toLowerCase().contains(t);
+                })
+                .limit(limit)
+                .collect(Collectors.toList());
+    }
+
+    @Tool("推荐随机书籍，返回 limit 本当前库中存在的书（简单随机抽样）")
+    public List<BookInfo> recommendRandomBooks(int limit) {
+        int total = countBooks();
+        if (total == 0 || limit <= 0) return java.util.Collections.emptyList();
+        int fetch = Math.min(Math.max(limit * 4, limit), 300); // 抓取一批做随机
+        List<BookInfo> batch = bookInfoMapper.queryBookListByPage(0, fetch);
+        java.util.Collections.shuffle(batch);
+        return batch.stream().limit(limit).collect(Collectors.toList());
+    }
+
+    @Tool("根据多个分类名称列出属于这些分类之一的书籍（任意匹配），limit 为返回条数上限")
+    public List<BookInfo> searchBooksByAnyCategories(List<String> categoryNames, int limit) {
+        if (categoryNames == null || categoryNames.isEmpty()) return java.util.Collections.emptyList();
+        List<BookCategory> all = categoryMapper.getAllCategories();
+        List<Integer> wanted = all.stream()
+                .filter(c -> c.getCategoryName() != null && categoryNames.stream().anyMatch(n -> c.getCategoryName().contains(n)))
+                .map(BookCategory::getId)
+                .collect(Collectors.toList());
+        if (wanted.isEmpty()) return java.util.Collections.emptyList();
+        List<BookInfo> batch = bookInfoMapper.queryBookListByPage(0, Math.max(limit, 300));
+        return batch.stream()
+                .filter(b -> containsAnyCategory(b.getCategoryIds(), wanted))
+                .limit(limit)
+                .collect(Collectors.toList());
+    }
+
+    @Tool("生成全库简要统计与分类覆盖摘要，包含总数与每个分类出现次数")
+    public String summarizeLibrary() {
+        int total = countBooks();
+        List<BookCategory> allCats = categoryMapper.getAllCategories();
+        List<BookInfo> sample = bookInfoMapper.queryBookListByPage(0, Math.min(Math.max(total, 300), 1000));
+        // 统计分类出现频次
+        java.util.Map<Integer, Integer> freq = new java.util.HashMap<>();
+        for (BookInfo b : sample) {
+            List<Integer> ids = extractCategoryIds(b.getCategoryIds());
+            for (Integer id : ids) {
+                freq.merge(id, 1, Integer::sum);
+            }
+        }
+        StringBuilder sb = new StringBuilder();
+        sb.append("图书总数：").append(total).append("\n分类覆盖：\n");
+        for (BookCategory c : allCats) {
+            int count = freq.getOrDefault(c.getId(), 0);
+            sb.append("- ").append(c.getCategoryName()).append(": ").append(count).append("本\n");
+        }
+        sb.append("可进一步根据标题或分类进行更具体查询。\n");
+        return sb.toString();
+    }
+
+    @Tool("获取指定书籍的面向用户的详细描述（含分类名、标签、简介拼接），用于回答用户关于某本书的查询")
+    public String getBookDetailRich(int id) {
+        BookInfo b = bookInfoMapper.queryBookById(id);
+        if (b == null) return "未找到该书";
+        StringBuilder sb = new StringBuilder();
+        sb.append("书名: ").append(nullSafe(b.getBookName())).append('\n');
+        sb.append("作者: ").append(nullSafe(b.getAuthor())).append('\n');
+        sb.append("出版社: ").append(nullSafe(b.getPublish())).append('\n');
+        if (b.getPrice() != null) sb.append("价格: ¥").append(b.getPrice()).append('\n');
+        sb.append("状态: ").append(statusText(b.getStatus())).append('\n');
+        sb.append("分类ID数组: ").append(nullSafe(b.getCategoryIds())).append('\n');
+        sb.append("标签: ").append(nullSafe(b.getTags())).append('\n');
+        sb.append("简介: ").append(nullSafe(b.getDescription())).append('\n');
+        return sb.toString();
+    }
+
+    @Tool("先在本地库按标题查找，若无结果则回退到 Tavily 网页搜索并返回摘要（参数：title, maxResults）")
+    public String findBookWithWebFallback(String title, int maxResults) {
+        if (title == null || title.isBlank()) return "查询内容为空";
+        int limit = Math.max(1, maxResults);
+        List<com.example.demo.model.BookInfo> local = searchBooksByTitle(title, limit);
+        if (local != null && !local.isEmpty()) {
+            // 构建简要表格
+            StringBuilder sb = new StringBuilder();
+            sb.append("在本地馆藏中找到如下匹配（优先展示前 ").append(limit).append(" 条）：\n");
+            sb.append("|书名|作者|出版社|分类|简介|\n");
+            for (com.example.demo.model.BookInfo b : local) {
+                sb.append("|")
+                        .append(nullSafe(b.getBookName())).append("|")
+                        .append(nullSafe(b.getAuthor())).append("|")
+                        .append(nullSafe(b.getPublish())).append("|")
+                        .append(nullSafe(b.getCategoryIds())).append("|")
+                        .append(nullSafe(b.getDescription())).append("|\n");
+            }
+            return sb.toString();
+        }
+        // 本地未命中，尝试网络回退
+        return tavilyWebTool.tavilySearch(title, limit, "basic");
+    }
+
+    private String nullSafe(String s) { return s == null ? "(无)" : s; }
+    private String statusText(Integer st) {
+        if (st == null) return "未知";
+        return switch (st) {
+            case 1 -> "在馆";
+            case 2 -> "已借出";
+            case 0 -> "已删除";
+            default -> "未知";
+        };
+    }
+
+    private List<Integer> extractCategoryIds(String json) {
+        if (json == null || json.isBlank()) return java.util.Collections.emptyList();
+        String t = json.trim();
+        if (t.startsWith("[") && t.endsWith("]")) {
+            t = t.substring(1, t.length() - 1);
+        }
+        if (t.isBlank()) return java.util.Collections.emptyList();
+        List<Integer> out = new java.util.ArrayList<>();
+        for (String part : t.split(",")) {
+            String num = part.replaceAll("[^0-9]", "").trim();
+            if (num.isEmpty()) continue;
+            try { out.add(Integer.parseInt(num)); } catch (NumberFormatException ignore) {}
+        }
+        return out;
     }
 }

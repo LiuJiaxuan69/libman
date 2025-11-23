@@ -2,6 +2,9 @@ package com.example.demo.controller;
 
 import com.example.demo.ai.LibraryAiService;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
+import jakarta.servlet.http.HttpSession;
+import com.example.demo.common.Constants;
+import com.example.demo.service.ChatContextService;
 import org.springframework.web.bind.annotation.*;
 import java.util.Map;
 import java.util.HashMap;
@@ -14,13 +17,15 @@ import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 public class AiController {
 
     private final LibraryAiService aiService;
+    private final ChatContextService chatContextService;
 
-    public AiController(LibraryAiService aiService) {
+    public AiController(LibraryAiService aiService, ChatContextService chatContextService) {
         this.aiService = aiService;
+        this.chatContextService = chatContextService;
     }
 
     @PostMapping("/chat")
-    public Map<String, Object> chat(@RequestBody Map<String, Object> body) {
+    public Map<String, Object> chat(@RequestBody Map<String, Object> body, HttpSession session) {
         String sessionId = body == null ? null : String.valueOf(body.getOrDefault("sessionId", ""));
         String message = body == null ? null : String.valueOf(body.getOrDefault("message", ""));
         Map<String, Object> resp = new HashMap<>();
@@ -29,8 +34,15 @@ public class AiController {
             resp.put("errorMessage", "message 不能为空");
             return resp;
         }
+        Integer userId = extractUserId(session);
+        if (userId != null) {
+            chatContextService.appendMessage(userId, "user", message);
+        }
         String ensured = aiService.ensureSessionId(sessionId);
-        String reply = aiService.chat(ensured, message);
+        String reply = aiService.chat(ensured, message, userId);
+        if (userId != null) {
+            chatContextService.appendMessage(userId, "assistant", reply);
+        }
         resp.put("status", "SUCCESS");
         resp.put("sessionId", ensured);
         resp.put("reply", reply);
@@ -38,7 +50,7 @@ public class AiController {
     }
 
     @PostMapping(value = "/chat/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
-    public SseEmitter stream(@RequestBody Map<String, Object> body) {
+    public SseEmitter stream(@RequestBody Map<String, Object> body, HttpSession session) {
         String sessionId = body == null ? null : String.valueOf(body.getOrDefault("sessionId", ""));
         String message = body == null ? null : String.valueOf(body.getOrDefault("message", ""));
         SseEmitter emitter = new SseEmitter(0L); // no timeout
@@ -49,10 +61,17 @@ public class AiController {
             } catch (Exception ignored) {}
             return emitter;
         }
+        Integer userId = extractUserId(session);
+        if (userId != null) {
+            chatContextService.appendMessage(userId, "user", message);
+        }
         aiService.simulatedStreamChat(sessionId, message,
                 sid -> safeSend(emitter, SseEmitter.event().name("session").data(sid)),
                 token -> safeSend(emitter, SseEmitter.event().name("token").data(token)),
                 full -> {
+                    if (userId != null) {
+                        chatContextService.appendMessage(userId, "assistant", full);
+                    }
                     safeSend(emitter, SseEmitter.event().name("done").data(full));
                     emitter.complete();
                 },
@@ -60,6 +79,7 @@ public class AiController {
                     safeSend(emitter, SseEmitter.event().name("error").data(err.getMessage() == null ? err.toString() : err.getMessage()));
                     emitter.complete();
                 }
+                , userId
         );
         return emitter;
     }
@@ -70,5 +90,14 @@ public class AiController {
         } catch (Exception e) {
             emitter.completeWithError(e);
         }
+    }
+
+    private Integer extractUserId(HttpSession session) {
+        if (session == null) return null;
+        Object obj = session.getAttribute(Constants.SESSION_USER_KEY);
+        if (obj instanceof com.example.demo.model.UserInfo u) {
+            return u.getId();
+        }
+        return null;
     }
 }
