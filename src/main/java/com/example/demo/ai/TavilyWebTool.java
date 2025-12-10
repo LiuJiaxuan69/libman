@@ -45,7 +45,7 @@ public class TavilyWebTool {
      * @param depth 搜索深度 basic / advanced （为空则使用默认）
      * @return 结构化文本：包含当前日期、Answer、Top Sources（标题+URL）
      */
-    @Tool("执行外部网络搜索（Tavily），返回带当前日期的摘要。参数：query 查询，maxResults 最大结果条数，depth 搜索深度 basic|advanced。")
+    @Tool("执行外部网络搜索（Tavily），可查询与图书管理无关的任何信息，返回带当前日期的摘要。参数：query 查询，maxResults 最大结果条数，depth 搜索深度 basic|advanced。")
     public String tavilySearch(String query, Integer maxResults, String depth) {
         if (query == null || query.isBlank()) {
             return "查询内容为空，无法执行 Tavily 搜索";

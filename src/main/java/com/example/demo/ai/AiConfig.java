@@ -26,11 +26,11 @@ public class AiConfig {
     private String modelName;
 
     // 模型温度（创意度），范围通常 0.0 - 1.0，可在 application.properties 里用 ai.temperature=0.9 调整
-    @Value("${ai.temperature:0.5}")
+    @Value("${ai.temperature:0.2}")
     private double temperature;
 
     // 最大生成 token 数（防止回答被截断，可适当提高）。具体上限受模型和账户限制。
-    @Value("${ai.max-tokens:1024}")
+    @Value("${ai.max-tokens:4096}")
     private Integer maxTokens;
 
     @Bean

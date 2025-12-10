@@ -49,6 +49,17 @@ public class MapperTools {
         return c == null ? 0 : c;
     }
 
+    @Tool("按捐赠者用户名列出其捐赠的书籍，参数: userName=用户名, limit=返回最大数量。若用户不存在返回空列表。")
+    public List<BookInfo> listDonatedBooksByUser(String userName, int limit) {
+        if (userName == null || userName.isBlank()) return java.util.Collections.emptyList();
+        UserInfo u = userInfoMapper.queryUserByName(userName.trim());
+        if (u == null) return java.util.Collections.emptyList();
+        int realLimit = Math.min(Math.max(limit, 1), 200);
+        List<BookInfo> all = bookInfoMapper.queryBooksByDonor(u.getId());
+        if (all == null || all.isEmpty()) return java.util.Collections.emptyList();
+        return all.stream().limit(realLimit).collect(Collectors.toList());
+    }
+
     @Tool("根据图书ID获取书籍详细")
     public BookInfo getBookById(int id) {
         return bookInfoMapper.queryBookById(id);
@@ -202,7 +213,7 @@ public class MapperTools {
         return sb.toString();
     }
 
-    @Tool("先在本地库按标题查找，若无结果则回退到 Tavily 网页搜索并返回摘要（参数：title, maxResults）")
+    @Tool("先在本地库按标题查找，若无结果则回退到 Tavily 网页搜索并返回摘要（参数：title, maxResults），该工具也可以用于查询与书籍无关的问题")
     public String findBookWithWebFallback(String title, int maxResults) {
         if (title == null || title.isBlank()) return "查询内容为空";
         int limit = Math.max(1, maxResults);

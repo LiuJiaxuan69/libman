@@ -138,6 +138,42 @@
 - GET `/category/list` — 获取所有分类
   - 返回：`Result<List<BookCategory>>`
 
+### FeedbackController (/feedback)
+
+- POST `/feedback/submit` — 提交用户反馈
+  - 参数（form 或 x-www-form-urlencoded）：`content`（必填），`rating`（选填，1-5）
+  - 认证：可匿名；若已登录将自动携带 `userId`
+  - 返回：`Result<Feedback>`（包含新建记录）
+
+- GET `/feedback/list` — 分页获取反馈列表
+  - 参数（query）：`offset`（默认 0），`limit`（默认 20）
+  - 返回：`Result<List<Feedback>>`
+
+- GET `/feedback/{id}` — 获取单条反馈详情
+  - 返回：`Result<Feedback>` 或 `Result.fail("记录不存在")`
+
+`Feedback` 模型字段：
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| `id` | Integer | 主键 |
+| `userId` | Integer/null | 提交人（匿名为 null） |
+| `content` | String | 反馈内容（必填） |
+| `rating` | Integer/null | 评分（1-5，可空） |
+| `createdAt` | Datetime | 创建时间 |
+
+建表 SQL（位于 `docker/feedback_table.sql`）：
+
+```sql
+CREATE TABLE IF NOT EXISTS feedback (
+  id INT PRIMARY KEY AUTO_INCREMENT,
+  user_id INT NULL,
+  content TEXT NOT NULL,
+  rating INT NULL,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+```
+
 ---
 
 ## 第二部分：`common` 类型字段说明与 JSON 示例
