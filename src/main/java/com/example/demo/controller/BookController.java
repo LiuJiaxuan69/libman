@@ -193,30 +193,57 @@ public class BookController {
                                              @RequestParam(value="file", required=false) MultipartFile file,
                                              HttpServletRequest request) {
         try {
+            // 1. 检查登录状态
+            HttpSession session = request.getSession(false);
+            if (session == null) {
+                log.warn("addBookWithCover: 用户未登录（session为null）");
+                return Result.fail("用户未登录，请先登录");
+            }
+            UserInfo userInfo = (UserInfo)session.getAttribute(Constants.SESSION_USER_KEY);
+            if (userInfo == null) {
+                log.warn("addBookWithCover: 用户未登录（session中无用户信息）");
+                return Result.fail("用户未登录，请先登录");
+            }
+            
+            // 2. 解析图书信息
             com.fasterxml.jackson.databind.ObjectMapper mapper = new com.fasterxml.jackson.databind.ObjectMapper();
             BookInfo bookInfo = mapper.readValue(bookJson, BookInfo.class);
-            HttpSession session = request.getSession(false);
-            UserInfo userInfo = (UserInfo)session.getAttribute(Constants.SESSION_USER_KEY);
+            log.info("解析图书信息成功: {}", bookInfo);
+            
+            // 3. 设置捐赠者ID和默认封面
             bookInfo.setDonorId(userInfo.getId());
             if (bookInfo.getCoverUrl() == null || bookInfo.getCoverUrl().isBlank()) {
                 bookInfo.setCoverUrl("default.png");
             }
+            
+            // 4. 添加图书到数据库
             boolean success = bookService.addBook(bookInfo);
-            if (!success) return Result.fail("添加图书失败");
-            // 上传封面（如果有）
+            if (!success) {
+                log.error("添加图书失败: bookService.addBook返回false");
+                return Result.fail("添加图书失败");
+            }
+            log.info("图书添加成功，ID: {}", bookInfo.getId());
+            
+            // 5. 上传封面（如果有）
             if (file != null && !file.isEmpty()) {
+                log.info("开始上传封面，文件大小: {} bytes", file.getSize());
                 if (file.getSize() > 5 * 1024 * 1024) {
+                    log.warn("封面文件过大: {} bytes", file.getSize());
                     return Result.fail("封面超过5MB限制");
                 }
-                String url = bookCoverService.uploadCover(bookInfo.getId(), file); // 更新 coverUrl
+                String url = bookCoverService.uploadCover(bookInfo.getId(), file);
+                log.info("封面上传成功: {}", url);
                 bookInfo.setCoverUrl(url);
             }
+            
+            // 6. 获取最新数据并广播事件
             BookInfo fresh = bookInfoMapper.queryBookById(bookInfo.getId());
             sseService.sendEvent("bookAdded", fresh);
+            log.info("图书捐赠完成: {}", fresh);
             return Result.success(fresh);
         } catch (Exception ex) {
             log.error("addBookWithCover error", ex);
-            return Result.fail("服务器错误");
+            return Result.fail("服务器错误: " + ex.getMessage());
         }
     }
 
