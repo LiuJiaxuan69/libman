@@ -72,5 +72,5 @@ ehthumbs.db
 Thumbs.db
 
 covers/*
-libman-frontend/public/*
+libman-frontend/public/videos/
 src/main/resources/static/*
